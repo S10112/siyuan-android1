@@ -56,21 +56,11 @@ jobs:
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png"
             done
 
-            # 4. 生成用于开屏启动画面的高清居中 Logo
+            # 4. 生成用于开屏启动画面的居中 Logo
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
 
-            # 5. 重写开屏页图层 boot.xml（将原生前景图彻底替换为 boot_logo.png）
-            cat << 'EOF' > app/src/main/res/drawable/boot.xml
-            <?xml version="1.0" encoding="utf-8"?>
-            <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-                <item android:drawable="@color/ic_launcher_background" />
-                <item
-                    android:width="128dp"
-                    android:height="128dp"
-                    android:gravity="center"
-                    android:drawable="@drawable/boot_logo" />
-            </layer-list>
-            EOF
+            # 5. 重写开屏页图层 boot.xml（使用 base64 写入，避开 EOF 语法错误）
+            echo 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPGxheWVyLWxpc3QgeG1sbnM6YW5kcm9pZD0iaHR0cDovL3NjaGVtYXMuYW5kcm9pZC5jb20vYXBrL3Jlcy9hbmRyb2lkIj4KICAgIDxpdGVtIGFuZHJvaWQ6ZHJhd2FibGU9IkBjb2xvci9pY19sYXVuY2hlcl9iYWNrZ3JvdW5kIiAvPgogICAgPGl0ZW0KICAgICAgICBhbmRyb2lkOndpZHRoPSIxMjhkcCIKICAgICAgICBhbmRyb2lkOmhlaWdodD0iMTI4ZHAiCiAgICAgICAgYW5kcm9pZDpncmF2aXR5PSJjZW50ZXIiCiAgICAgICAgYW5kcm9pZDpkcmF3YWJsZT0iQGRyYXdhYmxlL2Jvb3RfbG9nbyIgLz4KPC9sYXllci1saXN0Pgo=' | base64 -d > app/src/main/res/drawable/boot.xml
 
             echo "开屏画面与图标已全部处理完毕！"
           else
@@ -102,11 +92,11 @@ jobs:
           cp temp_apk/assets/app.zip app/src/main/assets/
           rm -rf temp_apk
 
-      # 步骤 4：生成干净的 AndroidManifest.xml（名称锁定为 金成笔记）
+      # 步骤 4：生成干净的 AndroidManifest.xml（使用 base64 写入，名称锁定为 金成笔记）
       - name: Generate Clean AndroidManifest.xml
         run: |
-          cat << 'EOF' > app/src/main/AndroidManifest.xml
-          <?xml version="1.0" encoding="utf-8"?>
+          python3 - << 'PY_EOF'
+          content = '''<?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               xmlns:tools="http://schemas.android.com/tools">
 
@@ -271,8 +261,10 @@ jobs:
 
               </application>
 
-          </manifest>
-          EOF
+          </manifest>'''
+          with open('app/src/main/AndroidManifest.xml', 'w', encoding='utf-8') as f:
+              f.write(content)
+          PY_EOF
 
       # 步骤 5：在 Gradle 中安全修改安装包名
       - name: Safely Set applicationId in Gradle
