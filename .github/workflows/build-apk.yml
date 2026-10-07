@@ -30,21 +30,26 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：大幅提升版本号、安全修改包名与应用名称
-      - name: Bump Version and Configure App Info
+      # 步骤 1：恢复干净清单并安全设置应用名、包名与版本号
+      - name: Configure App Info Safely
         run: |
           NEW_APP_ID="com.jincheng.note"
-          echo "正在升级版本号与包名..."
+          echo "正在配置版本号与应用信息..."
+          
+          # 确保清单文件为干净状态并精准修改 application 标签的名称
+          git checkout app/src/main/AndroidManifest.xml || true
+          sed -i '/<application/,/>/ s/android:label="[^"]*"/android:label="金成笔记"/' app/src/main/AndroidManifest.xml
+
+          # 提升版本号（强刷系统缓存）
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
+          # 修改包名
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
           if [ -f flavors.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" flavors.gradle
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
-
-          sed -i 's/android:label="[^"]*"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
       # 步骤 2：生成 Android 原生各规格图标与开屏资源
       - name: Replace App Icon and Native Resources
@@ -75,7 +80,7 @@ jobs:
             echo "原生 Android 图标与启动资源替换完成！"
           fi
 
-      # 步骤 3：下载官方前端资源 app.zip 并解压准备
+      # 步骤 3：下载官方前端资源 app.zip 并准备替换
       - name: Extract Real Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -95,7 +100,7 @@ jobs:
             find web_assets/ -type f \( -name "*logo*.png" -o -name "*icon*.png" -o -name "*logo*.webp" \) -exec convert logo.png -resize 256x256 -strip {} \; || true
           fi
 
-      # 步骤 4：使用独立 Python 引擎彻底替换前端网页中的 SVG 启动 Logo（无语法缩进风险）
+      # 步骤 4：使用独立 Python 引擎替换第二段 Web 前端启动 Logo
       - name: Replace Web Frontend Splash
         shell: python
         run: |
