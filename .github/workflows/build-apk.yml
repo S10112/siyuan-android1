@@ -30,7 +30,7 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：处理应用图标与开屏启动画面（彻底替换原生折纸 M 标志）
+      # 步骤 1：处理应用图标与开屏启动画面（精准替换，保留 shorthand_icon）
       - name: Replace App Icon and Splash Screen
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -38,8 +38,9 @@ jobs:
           if [ -f logo.png ]; then
             echo "检测到自定义 logo.png，开始替换应用图标与开屏画面..."
 
-            # 1. 彻底删除原生的矢量自适应图层（防止系统优先调用原生折纸图标）
-            rm -rf app/src/main/res/mipmap-anydpi-v26
+            # 1. 精准删除旧的桌面图标矢量规则，切勿删除整目录（以防误删 shorthand_icon）
+            rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+            rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
             rm -f app/src/main/res/drawable/launcher_foreground.xml
             rm -f app/src/main/res/drawable-v24/launcher_foreground.xml
 
@@ -47,19 +48,21 @@ jobs:
             mkdir -p app/src/main/res/drawable
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
 
-            # 3. 生成桌面各分辨率应用图标
+            # 3. 生成桌面各分辨率应用图标及快捷方式图标
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
               mkdir -p "$DIR"
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher.png"
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png"
+              # 补全可能缺失的 shorthand_icon 位图，防止 shortcuts.xml 链接失败
+              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
             done
 
             # 4. 生成用于开屏启动画面的居中 Logo
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
 
-            # 5. 重写开屏页图层 boot.xml（使用 base64 写入，避开 EOF 语法错误）
+            # 5. 重写开屏页图层 boot.xml
             echo 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPGxheWVyLWxpc3QgeG1sbnM6YW5kcm9pZD0iaHR0cDovL3NjaGVtYXMuYW5kcm9pZC5jb20vYXBrL3Jlcy9hbmRyb2lkIj4KICAgIDxpdGVtIGFuZHJvaWQ6ZHJhd2FibGU9IkBjb2xvci9pY19sYXVuY2hlcl9iYWNrZ3JvdW5kIiAvPgogICAgPGl0ZW0KICAgICAgICBhbmRyb2lkOndpZHRoPSIxMjhkcCIKICAgICAgICBhbmRyb2lkOmhlaWdodD0iMTI4ZHAiCiAgICAgICAgYW5kcm9pZDpncmF2aXR5PSJjZW50ZXIiCiAgICAgICAgYW5kcm9pZDpkcmF3YWJsZT0iQGRyYXdhYmxlL2Jvb3RfbG9nbyIgLz4KPC9sYXllci1saXN0Pgo=' | base64 -d > app/src/main/res/drawable/boot.xml
 
             echo "开屏画面与图标已全部处理完毕！"
@@ -92,7 +95,7 @@ jobs:
           cp temp_apk/assets/app.zip app/src/main/assets/
           rm -rf temp_apk
 
-      # 步骤 4：生成干净的 AndroidManifest.xml（使用 base64 写入，名称锁定为 金成笔记）
+      # 步骤 4：生成干净的 AndroidManifest.xml（名称锁定为 金成笔记）
       - name: Generate Clean AndroidManifest.xml
         run: |
           python3 - << 'PY_EOF'
