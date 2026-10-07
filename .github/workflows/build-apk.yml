@@ -30,21 +30,24 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：恢复干净清单并安全设置应用名、包名与版本号
+      # 步骤 1：从官方拉取绝对纯净的 AndroidManifest.xml，并配置应用名、版本号与包名
       - name: Configure App Info Safely
         run: |
           NEW_APP_ID="com.jincheng.note"
-          echo "正在配置版本号与应用信息..."
-          
-          # 确保清单文件为干净状态并精准修改 application 标签的名称
-          git checkout app/src/main/AndroidManifest.xml || true
-          sed -i '/<application/,/>/ s/android:label="[^"]*"/android:label="金成笔记"/' app/src/main/AndroidManifest.xml
+          echo "正在下载官方纯净 AndroidManifest.xml 并配置..."
 
-          # 提升版本号（强刷系统缓存）
+          # 1. 彻底解决 Error parsing：拉取官方原始未损坏的清单文件覆盖当前损坏文件
+          curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
+
+          # 2. 精准将官方应用名替换为“金成笔记”
+          sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
+
+          # 3. 提升版本号（强刷系统图标缓存）
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
-          # 修改包名
+          # 4. 修改包名
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
           if [ -f flavors.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" flavors.gradle
@@ -80,7 +83,7 @@ jobs:
             echo "原生 Android 图标与启动资源替换完成！"
           fi
 
-      # 步骤 3：下载官方前端资源 app.zip 并准备替换
+      # 步骤 3：下载官方前端资源 app.zip 并解压准备
       - name: Extract Real Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
