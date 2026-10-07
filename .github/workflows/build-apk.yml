@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout Android Repo
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -20,24 +22,17 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      # 安装 Go 环境（用于编译内核）
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      # 接受 Android SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 配置签名模板
       - name: Setup Signing Config
         run: |
-          cp signings.templates.gradle signings.gradle
+          cp -n signings.templates.gradle signings.gradle || true
 
-      # 步骤 1：从官方最新 APK 中提取完整的 UI 界面资源 (app.zip)
-      - name: Extract Real Assets (app.zip) from Official Release
+      # 仅在仓库中不存在 app.zip 时才去主库拉取
+      - name: Fetch Assets if Missing
+        if: "!hashFiles('app/src/main/assets/app.zip')"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -51,41 +46,44 @@ jobs:
           cp temp_apk/assets/app.zip app/src/main/assets/
           rm -rf temp_apk
 
-      # 步骤 2：官方正规方式编译生成真实的 kernel.aar (含 mobile.Mobile)
-      - name: Build Real SiYuan Kernel AAR
+      # 仅在仓库中不存在 kernel.aar 时才拉取主库并编译
+      - name: Build Kernel AAR if Missing
+        if: "!hashFiles('app/libs/kernel.aar')"
         env:
           CGO_ENABLED: '1'
           JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8'
         run: |
-          # 克隆主仓库核心源码
+          sudo apt-get update && sudo apt-get install -y golang
           git clone --depth=1 https://github.com/siyuan-note/siyuan.git /tmp/siyuan-core
-          
-          # 安装 gomobile 工具
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
           export PATH=$PATH:$(go env GOPATH)/bin
-          
-          # 自动获取 GitHub Actions 自带的 Android NDK 路径
           export ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/* | sort -V | tail -n 1)
           gomobile init
-
-          # 按照官方指南执行 gomobile bind 编译内核库
           cd /tmp/siyuan-core/kernel
           gomobile bind -tags "fts5 sqlcipher" -ldflags "-s -w" -v -o kernel.aar -target android/arm64 -androidapi 26 ./mobile/
-          
-          # 将生成的真实 kernel.aar 放入项目依赖目录
           mkdir -p $GITHUB_WORKSPACE/app/libs/
           cp kernel.aar $GITHUB_WORKSPACE/app/libs/
           rm -rf /tmp/siyuan-core
 
+      # 将生成的依赖自动保存回你的仓库（只在第一次缺少时触发）
+      - name: Save Dependencies to Repo
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f app/src/main/assets/app.zip app/libs/kernel.aar
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: cache kernel.aar and app.zip for offline build"
+            git push
+          fi
+
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 步骤 3：正式编译 Android APK
+      # 编译 APK
       - name: Build APK
         run: ./gradlew assembleGoogleplayDebug -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      # 步骤 4：上传最终可用的 APK 安装包
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
