@@ -30,43 +30,7 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：如果有上传 logo.png，彻底清除原生矢量图并全部替换为自定义图标
-      - name: Replace App Icon Completely
-        run: |
-          sudo apt-get update && sudo apt-get install -y imagemagick
-
-          if [ -f logo.png ]; then
-            echo "检测到自定义 logo.png，开始替换全部图标层..."
-            rm -rf app/src/main/res/mipmap-anydpi-v26
-            rm -f app/src/main/res/drawable/launcher_foreground.xml
-            rm -f app/src/main/res/drawable-v24/launcher_foreground.xml
-
-            mkdir -p app/src/main/res/drawable
-            convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
-
-            for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
-              DIR="app/src/main/res/mipmap-${res%%:*}"
-              SIZE="${res##*:}"
-              mkdir -p "$DIR"
-              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher.png"
-              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png"
-            done
-            echo "所有规格桌面图标替换完成！"
-          else
-            echo "未检测到 logo.png，跳过图标替换"
-          fi
-
-      # 步骤 2：生成正式签名并填充配置
-      - name: Setup Signing Configuration
-        run: |
-          keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
-          cp signings.templates.gradle signings.gradle
-          sed -i "s|storeFile .*|storeFile file('../release.jks')|g" signings.gradle
-          sed -i "s|storePassword .*|storePassword '123456'|g" signings.gradle
-          sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
-          sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
-
-      # 步骤 3：下载官方 APK 提取前端完整 UI 资源 (app.zip)
+      # 步骤 1：下载官方 APK 提取前端资源，并提取官方快捷图标 shorthand_icon
       - name: Extract Real Assets from Official Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -79,7 +43,59 @@ jobs:
           cd ..
           mkdir -p app/src/main/assets/
           cp temp_apk/assets/app.zip app/src/main/assets/
+
+          # 确保 shorthand_icon 齐全，避免资源链接报错
+          for dir in $(find temp_apk/res -type d -name "mipmap*"); do
+            TARGET_DIR="app/src/main/res/$(basename $dir)"
+            mkdir -p "$TARGET_DIR"
+            if [ -f "$dir/shorthand_icon.png" ]; then
+              cp "$dir/shorthand_icon.png" "$TARGET_DIR/"
+            fi
+          done
+
           rm -rf temp_apk
+
+      # 步骤 2：如果有上传 logo.png，彻底清除原生矢量图并全部替换为自定义图标
+      - name: Replace App Icon Completely
+        run: |
+          sudo apt-get update && sudo apt-get install -y imagemagick
+
+          if [ -f logo.png ]; then
+            echo "检测到自定义 logo.png，开始替换全部桌面图标..."
+            # 删除系统优先拦截的 anydpi-v26 自适应 XML 规则与前景矢量
+            rm -rf app/src/main/res/mipmap-anydpi-v26
+            rm -f app/src/main/res/drawable/launcher_foreground.xml
+            rm -f app/src/main/res/drawable-v24/launcher_foreground.xml
+
+            mkdir -p app/src/main/res/drawable
+            convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
+
+            # 遍历并生成所有分辨率的桌面图标，同时兜底 shorthand_icon
+            for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
+              DIR="app/src/main/res/mipmap-${res%%:*}"
+              SIZE="${res##*:}"
+              mkdir -p "$DIR"
+              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher.png"
+              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png"
+              # 若该目录下无 shorthand_icon 则生成兜底图标
+              if [ ! -f "$DIR/shorthand_icon.png" ]; then
+                convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
+              fi
+            done
+            echo "所有规格桌面图标替换完成！"
+          else
+            echo "未检测到 logo.png，跳过图标替换"
+          fi
+
+      # 步骤 3：生成正式签名并填充配置
+      - name: Setup Signing Configuration
+        run: |
+          keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
+          cp signings.templates.gradle signings.gradle
+          sed -i "s|storeFile .*|storeFile file('../release.jks')|g" signings.gradle
+          sed -i "s|storePassword .*|storePassword '123456'|g" signings.gradle
+          sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
+          sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
       # 步骤 4：生成 AndroidManifest.xml（名称锁定为 金成笔记）
       - name: Generate Clean AndroidManifest.xml
@@ -180,7 +196,17 @@ jobs:
                           <data android:mimeType="image/*" />
                       </intent-filter>
                       <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND_MULTIPLE" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="image/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
                           <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="video/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND_MULTIPLE" />
                           <category android:name="android.intent.category.DEFAULT" />
                           <data android:mimeType="video/*" />
                       </intent-filter>
@@ -190,7 +216,17 @@ jobs:
                           <data android:mimeType="audio/*" />
                       </intent-filter>
                       <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND_MULTIPLE" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="audio/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
                           <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="application/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND_MULTIPLE" />
                           <category android:name="android.intent.category.DEFAULT" />
                           <data android:mimeType="application/*" />
                       </intent-filter>
