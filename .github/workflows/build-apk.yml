@@ -1,0 +1,55 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch: # 支持在 GitHub 网页上手动点击按钮触发打包
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 思源需要 app.zip 资源文件，此处自动从官方最新 Release APK 中提取注入
+      - name: Prepare SiYuan Assets (app.zip & libs)
+        run: |
+          mkdir -p temp_extract
+          cd temp_extract
+          # 获取官方最新 release 的 apk 下载链接并下载
+          APK_URL=$(curl -s https://api.github.com/repos/siyuan-note/siyuan/releases/latest | grep "browser_download_url.*android.*\.apk" | head -n 1 | cut -d '"' -f 4)
+          if [ -z "$APK_URL" ]; then
+            echo "未找到对应 APK，使用备用方式下载"
+            curl -L -o official.apk https://github.com/siyuan-note/siyuan/releases/download/v3.1.20/siyuan-3.1.20-android.apk
+          else
+            curl -L -o official.apk "$APK_URL"
+          fi
+          unzip -q official.apk
+          cd ..
+          mkdir -p app/src/main/assets/
+          cp -r temp_extract/assets/* app/src/main/assets/ || true
+          rm -rf temp_extract
+
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleGoogleplayDebug --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: siyuan-debug-apk
+          path: app/build/outputs/apk/**/*.apk
