@@ -30,7 +30,7 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：大幅提升版本号、安全修改包名与应用名称（使用 sed，绝不损坏清单）
+      # 步骤 1：大幅提升版本号、安全修改包名与应用名称
       - name: Bump Version and Configure App Info
         run: |
           NEW_APP_ID="com.jincheng.note"
@@ -44,7 +44,6 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-          # 安全替换清单中的应用名称为“金成笔记”
           sed -i 's/android:label="[^"]*"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
       # 步骤 2：生成 Android 原生各规格图标与开屏资源
@@ -55,18 +54,15 @@ jobs:
           if [ -f logo.png ]; then
             echo "检测到自定义 logo.png，正在生成 Android 图标与原生开屏资源..."
 
-            # 1. 删除旧的桌面图标矢量规则（保留 shorthand_icon 防止编译断开）
             rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
             rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
             rm -f app/src/main/res/drawable/launcher_foreground.xml
             rm -f app/src/main/res/drawable-v24/launcher_foreground.xml
 
-            # 2. 生成通用 icon.png 和 boot_logo.png
             mkdir -p app/src/main/res/drawable
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
 
-            # 3. 生成桌面各分辨率应用图标及快捷方式图标
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
@@ -79,62 +75,54 @@ jobs:
             echo "原生 Android 图标与启动资源替换完成！"
           fi
 
-      # 步骤 3：核心——解包 app.zip 并彻底清除第二段网页前端加载界面的 SVG 折纸 Logo
-      - name: Extract Real Assets and Replace Web Frontend Splash
+      # 步骤 3：下载官方前端资源 app.zip 并解压准备
+      - name: Extract Real Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sudo apt-get install -y zip unzip
-
           mkdir -p temp_apk
           cd temp_apk
           gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
           APK_FILE=$(find . -maxdepth 1 -name "*.apk" | head -n 1)
           unzip -q "$APK_FILE"
           cd ..
-          
           mkdir -p web_assets
           unzip -q temp_apk/assets/app.zip -d web_assets/
 
           if [ -f logo.png ]; then
-            echo "正在对第二段 Web 前端启动页进行深度替换..."
-
             convert logo.png -resize 128x128 -strip /tmp/logo128.png
-
-            # 1. 替换前端所有图标/静态图片
-            find web_assets/ -type f \( -name "*logo*.png" -o -name "*icon*.png" -o -name "*logo*.webp" \) | while read img; do
-              convert logo.png -resize 256x256 -strip "$img" || true
-            done
-
-            # 2. 替换前端所有加载界面的 SVG 折纸 Logo
-            python3 - << 'PY_EOF'
-import os, re, base64
-
-with open('/tmp/logo128.png', 'rb') as f:
-    b64_str = 'data:image/png;base64,' + base64.b64encode(f.read()).decode('utf-8')
-
-replacement = f'<img src="{b64_str}" style="width:120px;height:120px;display:block;margin:auto;" />'
-
-for root, dirs, files in os.walk('web_assets'):
-    for file in files:
-        if file.endswith(('.html', '.js', '.css')):
-            path = os.path.join(root, file)
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-
-            new_content = re.sub(r'<svg[^>]*class="[^"]*boot__logo[^"]*"[^>]*>.*?</svg>', replacement, content, flags=re.DOTALL)
-            new_content = re.sub(r'<svg[^>]*id="loading"[^>]*>.*?</svg>', replacement, new_content, flags=re.DOTALL)
-
-            if new_content != content:
-                print(f"成功替换前端加载 Logo: {path}")
-                with open(path, 'w', encoding='utf-8') as f:
-                    f.write(new_content)
-
-print("第二段 Web 加载 SVG 扫描与替换完成！")
-PY_EOF
+            find web_assets/ -type f \( -name "*logo*.png" -o -name "*icon*.png" -o -name "*logo*.webp" \) -exec convert logo.png -resize 256x256 -strip {} \; || true
           fi
 
-          # 重新打成 app.zip 并放到 assets 目录
+      # 步骤 4：使用独立 Python 引擎彻底替换前端网页中的 SVG 启动 Logo（无语法缩进风险）
+      - name: Replace Web Frontend Splash
+        shell: python
+        run: |
+          import os, re, base64
+
+          logo_path = '/tmp/logo128.png'
+          if os.path.exists(logo_path):
+              with open(logo_path, 'rb') as f:
+                  b64_str = 'data:image/png;base64,' + base64.b64encode(f.read()).decode('utf-8')
+              
+              replacement = f'<img src="{b64_str}" style="width:120px;height:120px;display:block;margin:auto;" />'
+              for root, dirs, files in os.walk('web_assets'):
+                  for file in files:
+                      if file.endswith(('.html', '.js', '.css')):
+                          path = os.path.join(root, file)
+                          with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                              content = f.read()
+                          new_content = re.sub(r'<svg[^>]*class="[^"]*boot__logo[^"]*"[^>]*>.*?</svg>', replacement, content, flags=re.DOTALL)
+                          new_content = re.sub(r'<svg[^>]*id="loading"[^>]*>.*?</svg>', replacement, new_content, flags=re.DOTALL)
+                          if new_content != content:
+                              print(f'成功替换前端加载 Logo: {path}')
+                              with open(path, 'w', encoding='utf-8') as f:
+                                  f.write(new_content)
+
+      # 步骤 5：重新打包前端资源并放入 Android assets 目录
+      - name: Repack Web Assets
+        run: |
           cd web_assets
           zip -qr ../app.zip ./*
           cd ..
@@ -142,7 +130,7 @@ PY_EOF
           mv app.zip app/src/main/assets/app.zip
           rm -rf temp_apk web_assets /tmp/logo128.png
 
-      # 步骤 4：生成正式签名并配置
+      # 步骤 6：生成正式签名并配置
       - name: Setup Signing Configuration
         run: |
           keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
@@ -152,7 +140,7 @@ PY_EOF
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 5：编译底层核心库 kernel.aar
+      # 步骤 7：编译底层核心库 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
@@ -173,11 +161,11 @@ PY_EOF
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 步骤 6：编译国内正式版 (Cn Release)
+      # 步骤 8：编译国内正式版 (Cn Release)
       - name: Build Domestic Release APK
         run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      # 步骤 7：上传 APK 安装包
+      # 步骤 9：上传 APK 安装包
       - name: Upload Domestic Release APK
         uses: actions/upload-artifact@v4
         with:
