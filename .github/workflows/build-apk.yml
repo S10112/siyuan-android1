@@ -44,77 +44,21 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成正式签名并配置
-      - name: Setup Signing Configuration
+      # 步骤 2：生成 Android 原生各规格图标与引导页资源
+      - name: Replace App Icon and Native Resources
         run: |
-          keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
-          cp signings.templates.gradle signings.gradle
-          sed -i "s|storeFile .*|storeFile file('../release.jks')|g" signings.gradle
-          sed -i "s|storePassword .*|storePassword '123456'|g" signings.gradle
-          sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
-          sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
-
-      # 步骤 3：核心——提取官方 app.zip 并强力替换前端内部所有的思源启动 Logo！
-      - name: Extract Real Assets and Replace Web Frontend Logo
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          sudo apt-get update && sudo apt-get install -y imagemagick zip unzip
-
-          mkdir -p temp_apk
-          cd temp_apk
-          gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
-          APK_FILE=$(find . -maxdepth 1 -name "*.apk" | head -n 1)
-          unzip -q "$APK_FILE"
-          cd ..
-          
-          # 解包 app.zip 修改网页端加载画面
-          mkdir -p web_assets
-          unzip -q temp_apk/assets/app.zip -d web_assets/
+          sudo apt-get update && sudo apt-get install -y imagemagick
 
           if [ -f logo.png ]; then
-            echo "开始深度替换前端 app.zip 内部所有 Logo 图标..."
-            # 生成 Base64 编码的 PNG，用于替换 HTML/CSS 中内嵌的 SVG/图片
-            LOGO_B64=$(base64 -w 0 logo.png)
+            echo "检测到自定义 logo.png，正在生成 Android 图标与原生开屏资源..."
 
-            # 1. 查找并替换前端所有名为 logo、icon 的图片文件
-            find web_assets/ -type f \( -name "*logo*.png" -o -name "*icon*.png" -o -name "*logo*.webp" \) | while read img; do
-              echo "替换前端静态资源: $img"
-              convert logo.png -resize 256x256 -strip "$img" || true
-            done
-
-            # 2. 如果前端启动页使用 SVG 绘制折纸 Logo，替换 HTML/JS 里的内嵌 SVG/Logo
-            find web_assets/ -type f \( -name "*.html" -o -name "*.js" -o -name "*.css" \) | while read file; do
-              # 替换可能直接引用的 siyuan logo 路径或 class
-              sed -i 's|/stage/build/app/icons/icon.png|/appearance/boot/logo.png|g' "$file" || true
-            done
-
-            # 3. 往前端放入标准 logo.png 备用
-            convert logo.png -resize 256x256 -strip -define png:format=png32 web_assets/appearance/boot/logo.png || true
-            convert logo.png -resize 256x256 -strip -define png:format=png32 web_assets/stage/icon.png || true
-          fi
-
-          # 重新压缩回 app.zip 并放入 Android assets 目录
-          cd web_assets
-          zip -qr ../app.zip ./*
-          cd ..
-          mkdir -p app/src/main/assets/
-          mv app.zip app/src/main/assets/app.zip
-          rm -rf temp_apk web_assets
-
-      # 步骤 4：处理 Android 原生桌面图标与 原生引导布局
-      - name: Replace Native App Icon and Boot Activity
-        run: |
-          if [ -f logo.png ]; then
-            echo "正在覆写 Android 原生图标与原生 Boot 页面..."
-
-            # 1. 精准删除旧的桌面矢量图层
+            # 1. 删除旧的桌面图标矢量规则
             rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
             rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
             rm -f app/src/main/res/drawable/launcher_foreground.xml
             rm -f app/src/main/res/drawable-v24/launcher_foreground.xml
 
-            # 2. 生成通用 icon.png 与 boot_logo.png
+            # 2. 生成通用 icon.png 和 boot_logo.png
             mkdir -p app/src/main/res/drawable
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
@@ -129,11 +73,91 @@ jobs:
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
             done
 
-            # 4. 将原生 activity_boot.xml 中的原始 logo 资源直接换为我们的 boot_logo
-            find app/src/main/res/layout/ -name "activity_boot.xml" -exec sed -i 's|android:src="@drawable/[^"]*"|android:src="@drawable/boot_logo"|g' {} +
+            echo "原生 Android 图标与启动资源替换完成！"
           fi
 
-      # 步骤 5：生成干净的 AndroidManifest.xml（锁定名称为 金成笔记）
+      # 步骤 3：核心——解包 app.zip 并彻底清除第二段网页前端加载界面的 SVG 折纸 Logo！
+      - name: Extract Real Assets and Replace Web Frontend Splash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sudo apt-get install -y zip unzip
+
+          mkdir -p temp_apk
+          cd temp_apk
+          gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
+          APK_FILE=$(find . -maxdepth 1 -name "*.apk" | head -n 1)
+          unzip -q "$APK_FILE"
+          cd ..
+          
+          mkdir -p web_assets
+          unzip -q temp_apk/assets/app.zip -d web_assets/
+
+          if [ -f logo.png ]; then
+            echo "正在对第二段 Web 前端启动页进行深度替换..."
+
+            # 生成 128x128 的 Base64 字符串供 HTML 替换
+            convert logo.png -resize 128x128 -strip /tmp/logo128.png
+            B64_IMG="data:image/png;base64,$(base64 -w 0 /tmp/logo128.png)"
+
+            # 1. 替换前端所有图标/静态图片
+            find web_assets/ -type f \( -name "*logo*.png" -o -name "*icon*.png" -o -name "*logo*.webp" \) | while read img; do
+              convert logo.png -resize 256x256 -strip "$img" || true
+            done
+
+            # 2. 核心：替换所有 HTML 中第二段加载界面的折纸 SVG
+            python3 - << 'PY_EOF'
+            import os, re, base64
+
+            with open('/tmp/logo128.png', 'rb') as f:
+                b64_str = "data:image/png;base64," + base64.b64encode(f.read()).decode('utf-8')
+
+            # 遍历前端所有 HTML 文件，找到加载占位区域并替换为新 Logo
+            for root, dirs, files in os.walk('web_assets'):
+                for file in files:
+                    if file.endswith('.html'):
+                        path = os.path.join(root, file)
+                        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+
+                        # 替换写死在 HTML 里的思源折纸 SVG（形如 <svg ... class="b3-snack__icon"...> 或者 id="loading" 下的 svg）
+                        new_content = re.sub(r'<svg[^>]*class="[^"]*boot__logo[^"]*"[^>]*>.*?</svg>', 
+                                             f'<img src="{b64_str}" style="width:96px;height:96px;margin:auto;" />', 
+                                             content, flags=re.DOTALL)
+                        
+                        # 兼容普通加载 SVG 图形替换
+                        new_content = re.sub(r'<svg[^>]*id="loading"[^>]*>.*?</svg>', 
+                                             f'<img src="{b64_str}" style="width:96px;height:96px;margin:auto;" />', 
+                                             new_content, flags=re.DOTALL)
+
+                        if new_content != content:
+                            print(f"成功替换 HTML 启动加载 Logo: {path}")
+                            with open(path, 'w', encoding='utf-8') as f:
+                                f.write(new_content)
+
+            print("前端第二段加载 SVG 扫描与替换完成！")
+            PY_EOF
+          fi
+
+          # 重新打成 app.zip 并放到 Android assets 目录
+          cd web_assets
+          zip -qr ../app.zip ./*
+          cd ..
+          mkdir -p app/src/main/assets/
+          mv app.zip app/src/main/assets/app.zip
+          rm -rf temp_apk web_assets /tmp/logo128.png
+
+      # 步骤 4：生成正式签名并配置
+      - name: Setup Signing Configuration
+        run: |
+          keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
+          cp signings.templates.gradle signings.gradle
+          sed -i "s|storeFile .*|storeFile file('../release.jks')|g" signings.gradle
+          sed -i "s|storePassword .*|storePassword '123456'|g" signings.gradle
+          sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
+          sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
+
+      # 步骤 5：生成干净的 AndroidManifest.xml（名称锁定为 金成笔记）
       - name: Generate Clean AndroidManifest.xml
         run: |
           python3 - << 'PY_EOF'
