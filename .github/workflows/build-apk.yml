@@ -20,40 +20,51 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      # 自动接受 SDK 许可协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
+      # 配置签名模板
       - name: Setup Signing Config
         run: |
           cp signings.templates.gradle signings.gradle
 
-      # 自动从官方主仓库拉取最新发布的内核与前端资产
-      - name: Pull Kernel and Assets from Main SiYuan Release
+      # 使用 GitHub CLI 自动查找并拉取官方 Release 中的最新 APK
+      - name: Fetch Real Kernel and Assets from Official Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p temp_apk
           cd temp_apk
+
+          # 自动匹配并下载官方仓库中的 .apk 文件
+          gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
           
-          # 获取官方最新 release tag 并下载安卓安装包
-          TAG=$(curl -s https://api.github.com/repos/siyuan-note/siyuan/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-          VERSION=${TAG#v}
-          echo "Downloading official APK for version: $VERSION"
-          curl -L -o official.apk "https://github.com/siyuan-note/siyuan/releases/download/${TAG}/siyuan-${VERSION}-android.apk"
-          
-          unzip -q official.apk
+          # 获取实际下载到的 apk 文件名
+          APK_FILE=$(find . -maxdepth 1 -name "*.apk" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "未找到官方 APK 文件！"
+            exit 1
+          fi
+          echo "已成功下载真实安装包: $APK_FILE"
+
+          # 解压提取资产
+          unzip -q "$APK_FILE"
           cd ..
 
-          # 注入前端资源
+          # 1. 注入前端完整 UI 资源
           mkdir -p app/src/main/assets/
           cp temp_apk/assets/app.zip app/src/main/assets/
 
-          # 注入核心库 kernel.aar
+          # 2. 注入底层核心库 kernel.aar 并补齐 Android AAR 标准结构
           mkdir -p app/libs/
           mkdir -p aar_build/jni
           cp -r temp_apk/lib/* aar_build/jni/
           cat << 'EOF' > aar_build/AndroidManifest.xml
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="mobile"></manifest>
           EOF
+          touch aar_build/classes.jar
           cd aar_build
           zip -r ../app/libs/kernel.aar .
           cd ..
@@ -67,6 +78,7 @@ jobs:
       - name: Build APK
         run: ./gradlew assembleGoogleplayDebug -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
+      # 上传生成的 APK 文件
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
