@@ -44,7 +44,7 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：全规格重塑应用图标，并彻底重写 activity_boot.xml 启动开屏布局（使用 Base64 避免语法错误）
+      # 步骤 2：使用你的 logo.png 彻底覆盖开屏画面与所有桌面图标
       - name: Replace App Icon and Splash Screen
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -52,18 +52,19 @@ jobs:
           if [ -f logo.png ]; then
             echo "检测到自定义 logo.png，正在强力覆写桌面图标与开屏画面..."
 
-            # 1. 精准删除旧的桌面图标矢量规则（保留 shorthand_icon 防止编译断开）
+            # 1. 精准删除旧的桌面图标矢量规则（保留 shorthand_icon 防止编译报错）
             rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
             rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
             rm -f app/src/main/res/drawable/launcher_foreground.xml
             rm -f app/src/main/res/drawable-v24/launcher_foreground.xml
 
-            # 2. 生成通用 icon.png 与开屏专用 boot_logo.png
+            # 2. 覆盖生成通用 icon.png 以及开屏可能读取的各种命名的 logo
             mkdir -p app/src/main/res/drawable
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
+            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/logo.png
 
-            # 3. 生成桌面各分辨率应用图标及快捷方式图标
+            # 3. 覆盖生成桌面各分辨率应用图标及快捷方式图标
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
@@ -73,10 +74,10 @@ jobs:
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
             done
 
-            # 4. 彻底重写 activity_boot.xml 布局（使用 Base64 写入，彻底消除 EOF 语法错误）
-            echo 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPFJlbGF0aXZlTGF5b3V0IHhtbG5zOmFuZHJvaWQ9Imh0dHA6Ly9zY2hlbWFzLmFuZHJvaWQuY29tL2Fway9yZXMvYW5kcm9pZCIKICAgIGFuZHJvaWQ6bGF5b3V0X3dpZHRoPSJtYXRjaF9wYXJlbnQiCiAgICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9Im1hdGNoX3BhcmVudCIKICAgIGFuZHJvaWQ6YmFja2dyb3VuZD0iQGNvbG9yL2RhcmsiPgoKICAgIDxJbWFnZVZpZXcKICAgICAgICBhbmRyb2lkOmlkPSJAZStpZC9sb2dvIgogICAgICAgIGFuZHJvaWQ6bGF5b3V0X3dpZHRoPSIxMjhkcCIKICAgICAgICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9IjEyOGRwIgogICAgICAgIGFuZHJvaWQ6bGF5b3V0X2NlbnRlckluUGFyZW50PSJ0cnVlIgogICAgICAgIGFuZHJvaWQ6Y29udGVudERlc2NyaXB0aW9uPSJAbnVsbCIKICAgICAgICBhbmRyb2lkOnNyYz0iQGRyYXdhYmxlL2Jvb3RfbG9nbyIgLz4KCiAgICA8UHJvZ3Jlc3NCYXIKICAgICAgICBhbmRyb2lkOmlkPSJAZStpZC9wcm9ncmVzc0JhciIKICAgICAgICBhbmRyb2lkOmxheW91dF93aWR0aD0iMzJkcCIKICAgICAgICBhbmRyb2lkOmxheW91dF9oZWlnaHQ9IjMyZHAiCiAgICAgICAgYW5kcm9pZDpsYXlvdXRfYmVsb3c9IkBpZC9sb2dvIgogICAgICAgIGFuZHJvaWQ6bGF5b3V0X2NlbnRlckhvcml6b250YWw9InRydWUiCiAgICAgICAgYW5kcm9pZDpsYXlvdXRfbWFyZ2luVG9wPSIzMmRwIgogICAgICAgIGFuZHJvaWQ6dmlzaWJpbGl0eT0iZ29uZSIgLz4KCjwvUmVsYXRpdmVMYXlvdXQ+Cg==' | base64 -d > app/src/main/res/layout/activity_boot.xml
+            # 4. 精准将 activity_boot.xml 中的原始 logo 资源引用替换为我们的 boot_logo
+            find app/src/main/res/layout/ -name "activity_boot.xml" -exec sed -i 's|android:src="@drawable/[^"]*"|android:src="@drawable/boot_logo"|g' {} +
 
-            echo "开屏布局 activity_boot.xml 与所有图标已彻底重写为新 Logo！"
+            echo "开屏画面资源与所有图标已覆盖就绪！"
           else
             echo "未在根目录找到 logo.png"
           fi
@@ -106,7 +107,7 @@ jobs:
           cp temp_apk/assets/app.zip app/src/main/assets/
           rm -rf temp_apk
 
-      # 步骤 5：生成干净的 AndroidManifest.xml（使用 Python 规范写入，锁定名称为 金成笔记）
+      # 步骤 5：生成干净的 AndroidManifest.xml（名称锁定为 金成笔记）
       - name: Generate Clean AndroidManifest.xml
         run: |
           python3 - << 'PY_EOF'
