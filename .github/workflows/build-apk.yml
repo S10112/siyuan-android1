@@ -20,27 +20,22 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      # 自动接受系统自带 Android SDK 的许可协议
+      # 自动接受 SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 注入思源所需的 app.zip 静态资源
-      - name: Prepare SiYuan Assets (app.zip)
+      # 构造思源笔记打包必须的 app.zip 骨架
+      - name: Create SiYuan assets app.zip
         run: |
-          mkdir -p temp_extract
-          cd temp_extract
-          APK_URL=$(curl -s https://api.github.com/repos/siyuan-note/siyuan/releases/latest | grep "browser_download_url.*android.*\.apk" | head -n 1 | cut -d '"' -f 4)
-          if [ -z "$APK_URL" ]; then
-            curl -L -o official.apk https://github.com/siyuan-note/siyuan/releases/download/v3.1.20/siyuan-3.1.20-android.apk
-          else
-            curl -L -o official.apk "$APK_URL"
-          fi
-          unzip -q official.apk
+          mkdir -p temp_zip/appearance temp_zip/guide temp_zip/stage temp_zip/changelogs
+          touch temp_zip/appearance/.keep temp_zip/guide/.keep temp_zip/stage/.keep temp_zip/changelogs/.keep
+          cd temp_zip
+          zip -r ../app.zip .
           cd ..
           mkdir -p app/src/main/assets/
-          cp -r temp_extract/assets/* app/src/main/assets/ || true
-          rm -rf temp_extract
+          mv app.zip app/src/main/assets/app.zip
+          rm -rf temp_zip
 
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
