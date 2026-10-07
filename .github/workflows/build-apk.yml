@@ -25,12 +25,183 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 自动接受 Android SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 生成正式版 Release 签名并配置到 signings.gradle
+      # 步骤 1：直接自动生成干净无乱码的 AndroidManifest.xml 并命名为“金成笔记”
+      - name: Generate Clean AndroidManifest.xml
+        run: |
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" android:minSdkVersion="33" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+              <uses-feature android:name="android.hardware.camera" android:required="false" />
+              <uses-permission android:name="android.permission.CAMERA" />
+
+              <uses-feature android:name="android.hardware.microphone" android:required="false" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT" />
+              <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
+              <application
+                  android:name=".App"
+                  android:enableOnBackInvokedCallback="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="金成笔记"
+                  android:localeConfig="@xml/locales_config"
+                  android:networkSecurityConfig="@xml/network_security_config"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.SiYuan"
+                  android:usesCleartextTraffic="true"
+                  tools:targetApi="tiramisu">
+
+                  <activity
+                      android:name=".BootActivity"
+                      android:autoRemoveFromRecents="true"
+                      android:configChanges="orientation|screenSize"
+                      android:exported="true"
+                      android:hardwareAccelerated="true"
+                      android:theme="@style/Theme.SiYuan.Boot">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                      <meta-data
+                          android:name="android.app.shortcuts"
+                          android:resource="@xml/shortcuts" />
+                  </activity>
+
+                  <activity
+                      android:name=".RedirectUriReceiverActivity"
+                      android:excludeFromRecents="true"
+                      android:exported="true"
+                      android:noHistory="true"
+                      android:theme="@style/Theme.SiYuan.Transparent">
+                      <intent-filter>
+                          <action android:name="android.intent.action.VIEW" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <category android:name="android.intent.category.BROWSABLE" />
+                          <data android:scheme="siyuan" />
+                      </intent-filter>
+                  </activity>
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:autoRemoveFromRecents="true"
+                      android:configChanges="keyboard|keyboardHidden|screenLayout|uiMode|orientation|screenSize|smallestScreenSize"
+                      android:hardwareAccelerated="true"
+                      android:theme="@style/Theme.SiYuan"
+                      android:windowSoftInputMode="adjustResize" />
+
+                  <activity
+                      android:name=".ShortcutActivity"
+                      android:exported="true"
+                      android:launchMode="singleTask"
+                      android:taskAffinity="org.b3log.siyuan.shorthand"
+                      android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.VIEW" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:scheme="shorthand" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="text/plain" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="image/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND_MULTIPLE" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="image/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="video/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND_MULTIPLE" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="video/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="audio/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND_MULTIPLE" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="audio/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="application/*" />
+                      </intent-filter>
+                      <intent-filter android:label="@string/shortcut_shorthand">
+                          <action android:name="android.intent.action.SEND_MULTIPLE" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <data android:mimeType="application/*" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".KeepLiveService"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="hosting" />
+                  </service>
+
+                  <service
+                      android:name=".KernelService"
+                      android:exported="false"
+                      android:foregroundServiceType="specialUse">
+                      <property
+                          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                          android:value="hosting" />
+                  </service>
+
+                  <receiver android:name=".NotificationReceiver" />
+
+                  <provider
+                      android:name="androidx.core.content.FileProvider"
+                      android:authorities="@string/app_package_name"
+                      android:grantUriPermissions="true">
+                      <meta-data
+                          android:name="android.support.FILE_PROVIDER_PATHS"
+                          android:resource="@xml/provider_paths" />
+                  </provider>
+
+                  <meta-data
+                      android:name="CHANNEL"
+                      android:value="${CHANNEL}" />
+
+              </application>
+
+          </manifest>
+          EOF
+
+      # 步骤 2：生成正式签名并填充配置
       - name: Setup Signing Configuration
         run: |
           keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
@@ -40,7 +211,7 @@ jobs:
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 从官方 APK 提取完整的前端 UI 界面 (app.zip)
+      # 步骤 3：提取前端 UI 资源 (app.zip)
       - name: Extract Real Assets (app.zip) from Official Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,7 +226,7 @@ jobs:
           cp temp_apk/assets/app.zip app/src/main/assets/
           rm -rf temp_apk
 
-      # 编译底层核心库 kernel.aar
+      # 步骤 4：编译 Go 核心库 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
@@ -76,11 +247,11 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 编译国内正式版（Cn 渠道 Release 正式签名安装包）
+      # 步骤 5：打出国内正式版 (Cn Release)
       - name: Build Domestic Release APK
         run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      # 上传生成的 APK 安装包
+      # 步骤 6：上传 APK 产物
       - name: Upload Domestic Release APK
         uses: actions/upload-artifact@v4
         with:
