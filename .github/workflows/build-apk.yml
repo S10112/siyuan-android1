@@ -40,7 +40,7 @@ jobs:
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 大幅提升版本号强刷缓存
+          # 大幅提升版本号强刷系统缓存
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
@@ -76,32 +76,25 @@ jobs:
             done
           fi
 
-      # 步骤 3：直接从思源主库获取前端源码，覆盖自定义页面并打包为 app.zip
-      - name: Fetch Frontend Assets from Main Repo and Package app.zip
+      # 步骤 3：直接拉取你改好的 S10112/siyuan 主库，打包生成 app.zip
+      - name: Fetch Frontend Assets from Your Siyuan Repo and Package
         run: |
           sudo apt-get install -y zip unzip
-          echo "正在克隆思源主库获取最新前端静态资产..."
-          git clone --depth=1 https://github.com/siyuan-note/siyuan.git /tmp/siyuan-main
+          echo "正在克隆你自己的主库 S10112/siyuan..."
+          git clone --depth=1 https://github.com/S10112/siyuan.git /tmp/siyuan-custom
 
-          # 如果你的仓库根目录上传了 appearance/boot/，直接覆盖主库的对应文件
-          if [ -d appearance/boot ]; then
-            echo "检测到自定义 appearance/boot/，正在覆盖思源主库资源..."
-            cp -rf appearance/boot/* /tmp/siyuan-main/app/appearance/boot/
-          fi
-
-          # 如果根目录有 logo.png，自动生成 logo 图标放进 boot 目录
+          # 如果根目录有 logo.png，自动为前端生成匹配的 logo.png
           if [ -f logo.png ]; then
-            convert logo.png -resize 256x256 -strip /tmp/siyuan-main/app/appearance/boot/logo.png
-            convert logo.png -resize 256x256 -strip /tmp/siyuan-main/app/appearance/boot/icon.png
+            convert logo.png -resize 256x256 -strip /tmp/siyuan-custom/app/appearance/boot/logo.png || true
+            convert logo.png -resize 256x256 -strip /tmp/siyuan-custom/app/appearance/boot/icon.png || true
           fi
 
-          # 按照思源开发规范，将 app 目录下的资源直接打包为 app.zip
+          # 按照官方指南把 app/ 目录打包成 app.zip 并放入 assets
           mkdir -p app/src/main/assets/
-          cd /tmp/siyuan-main/app
+          cd /tmp/siyuan-custom/app
           zip -qr "$GITHUB_WORKSPACE/app/src/main/assets/app.zip" ./*
           cd "$GITHUB_WORKSPACE"
-          
-          echo "app.zip 打包生成成功并放入 app/src/main/assets/！"
+          echo "app.zip 已经使用你修改好的前端代码完成打包！"
 
       # 步骤 4：生成正式签名并配置
       - name: Setup Signing Configuration
@@ -113,7 +106,7 @@ jobs:
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 5：编译底层核心库 kernel.aar（直接复用刚才克隆的主库）
+      # 步骤 5：使用你自己的主库编译底层 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
@@ -124,11 +117,11 @@ jobs:
           export PATH=$PATH:$(go env GOPATH)/bin
           export ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/* | sort -V | tail -n 1)
           gomobile init
-          cd /tmp/siyuan-main/kernel
+          cd /tmp/siyuan-custom/kernel
           gomobile bind -tags "fts5 sqlcipher" -ldflags "-s -w" -v -o kernel.aar -target android/arm64 -androidapi 26 ./mobile/
           mkdir -p $GITHUB_WORKSPACE/app/libs/
           cp kernel.aar $GITHUB_WORKSPACE/app/libs/
-          rm -rf /tmp/siyuan-main
+          rm -rf /tmp/siyuan-custom
 
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
