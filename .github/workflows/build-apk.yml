@@ -40,8 +40,8 @@ jobs:
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 2：下载官方 APK 提取资产，并提取真实的官方高清图标覆盖以修复 icon.png
-      - name: Extract Real Assets and Fix Icons from Official Release
+      # 步骤 2：下载官方 APK 提取资产，并提取官方标准 PNG 替换修复 icon.png
+      - name: Extract Real Assets and Fix Icons
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -56,16 +56,15 @@ jobs:
           mkdir -p app/src/main/assets/
           cp temp_apk/assets/app.zip app/src/main/assets/
 
-          # 2. 从官方 APK 中还原一份纯净无损的 icon.png，彻底解决 AAPT 编译报错
-          if [ -f temp_apk/res/drawable/icon.png ]; then
-            cp temp_apk/res/drawable/icon.png app/src/main/res/drawable/icon.png
-          elif [ -f temp_apk/res/mipmap-xxhdpi-v4/ic_launcher.png ]; then
-            cp temp_apk/res/mipmap-xxhdpi-v4/ic_launcher.png app/src/main/res/drawable/icon.png
+          # 2. 从官方 APK 还原一份标准的无损 icon.png
+          ICON_SRC=$(find temp_apk/res -name "ic_launcher.png" -o -name "icon.png" | head -n 1)
+          if [ -n "$ICON_SRC" ]; then
+            cp "$ICON_SRC" app/src/main/res/drawable/icon.png
           fi
 
           rm -rf temp_apk
 
-      # 步骤 3：生成干净的 AndroidManifest.xml（名称锁定为 金成笔记，包名自适应）
+      # 步骤 3：生成干净的 AndroidManifest.xml（名称锁定为 金成笔记）
       - name: Generate Clean AndroidManifest.xml
         run: |
           cat << 'EOF' > app/src/main/AndroidManifest.xml
@@ -236,13 +235,11 @@ jobs:
           </manifest>
           EOF
 
-      # 步骤 4：精准只在 Gradle 中修改 applicationId 包名（不破坏任何 res 资源和 java 代码）
+      # 步骤 4：在 Gradle 中安全修改安装包名
       - name: Safely Set applicationId in Gradle
         run: |
           NEW_APP_ID="com.jincheng.note"
-          # 仅替换 build.gradle 里的 applicationId 定义
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
-          # 替换 flavors.gradle 中渠道的 applicationId / applicationPackageName
           if [ -f flavors.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" flavors.gradle
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
@@ -269,9 +266,9 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 步骤 6：编译国内正式版 (Cn Release)，同时关闭 AAPT 处理中的 crunch 严格限制
+      # 步骤 6：编译国内正式版 (Cn Release)，使用干净的构建命令
       - name: Build Domestic Release APK
-        run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 -Pandroid.aapt2FromMavenOverride=true --no-daemon --stacktrace
+        run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
       # 步骤 7：上传 APK 产物
       - name: Upload Domestic Release APK
