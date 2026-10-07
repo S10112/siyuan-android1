@@ -20,19 +20,18 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      # 自动接受 SDK 协议
+      # 自动接受 SDK 许可
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 构造思源笔记打包必须的 app.zip 骨架
-      - name: Create SiYuan assets app.zip
+      # 准备思源必需的签名模板和资源骨架
+      - name: Prepare Signing and Assets
         run: |
+          cp signings.templates.gradle signings.gradle
           mkdir -p temp_zip/appearance temp_zip/guide temp_zip/stage temp_zip/changelogs
           touch temp_zip/appearance/.keep temp_zip/guide/.keep temp_zip/stage/.keep temp_zip/changelogs/.keep
-          cd temp_zip
-          zip -r ../app.zip .
-          cd ..
+          cd temp_zip && zip -r ../app.zip . && cd ..
           mkdir -p app/src/main/assets/
           mv app.zip app/src/main/assets/app.zip
           rm -rf temp_zip
@@ -40,8 +39,9 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleGoogleplayDebug --no-daemon --stacktrace
+      # 使用项目自带的打包任务，并传入 compileSdk 变量
+      - name: Build APK
+        run: ./gradlew assembleGoogleplayDebug -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
