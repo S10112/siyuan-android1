@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Android Shell
+      - name: Checkout Android Repo
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -20,64 +20,55 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      # 自动接受 SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 准备签名配置
-      - name: Prepare Signing Config
+      - name: Setup Signing Config
         run: |
           cp signings.templates.gradle signings.gradle
 
-      # 准备静态资源骨架 app.zip
-      - name: Create SiYuan assets app.zip
+      # 自动从官方主仓库拉取最新发布的内核与前端资产
+      - name: Pull Kernel and Assets from Main SiYuan Release
         run: |
-          mkdir -p temp_zip/appearance temp_zip/guide temp_zip/stage temp_zip/changelogs
-          touch temp_zip/appearance/.keep temp_zip/guide/.keep temp_zip/stage/.keep temp_zip/changelogs/.keep
-          cd temp_zip && zip -r ../app.zip . && cd ..
-          mkdir -p app/src/main/assets/
-          mv app.zip app/src/main/assets/app.zip
-          rm -rf temp_zip
+          mkdir -p temp_apk
+          cd temp_apk
+          
+          # 获取官方最新 release tag 并下载安卓安装包
+          TAG=$(curl -s https://api.github.com/repos/siyuan-note/siyuan/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          VERSION=${TAG#v}
+          echo "Downloading official APK for version: $VERSION"
+          curl -L -o official.apk "https://github.com/siyuan-note/siyuan/releases/download/${TAG}/siyuan-${VERSION}-android.apk"
+          
+          unzip -q official.apk
+          cd ..
 
-      # 编译 Go 核心模块并生成 kernel.aar
-      - name: Build SiYuan Kernel AAR
-        env:
-          CGO_ENABLED: '1'
-          JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8'
-        run: |
-          # 克隆思源核心源码
-          git clone --depth=1 https://github.com/siyuan-note/siyuan.git /tmp/siyuan-core
-          
-          # 安装并初始化 gomobile 工具
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          go install golang.org/x/mobile/cmd/gobind@latest
-          export PATH=$PATH:$(go env GOPATH)/bin
-          export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
-          gomobile init
-          
-          # 进入内核目录编译 aar
-          cd /tmp/siyuan-core/kernel
-          gomobile bind -tags "fts5 sqlcipher" -ldflags "-s -w" -v -o kernel.aar -target android/arm64 -androidapi 26 ./mobile/
-          
-          # 放置到主项目的 libs 目录供 Gradle 调用
-          mkdir -p $GITHUB_WORKSPACE/app/libs/
-          cp kernel.aar $GITHUB_WORKSPACE/app/libs/
+          # 注入前端资源
+          mkdir -p app/src/main/assets/
+          cp temp_apk/assets/app.zip app/src/main/assets/
+
+          # 注入核心库 kernel.aar
+          mkdir -p app/libs/
+          mkdir -p aar_build/jni
+          cp -r temp_apk/lib/* aar_build/jni/
+          cat << 'EOF' > aar_build/AndroidManifest.xml
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="mobile"></manifest>
+          EOF
+          cd aar_build
+          zip -r ../app/libs/kernel.aar .
+          cd ..
+
+          rm -rf temp_apk aar_build
 
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 执行 Android 打包
+      # 编译 Debug APK
       - name: Build APK
         run: ./gradlew assembleGoogleplayDebug -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: siyuan-debug-apk
+          name: siyuan-apk
           path: app/build/outputs/apk/**/*.apk
