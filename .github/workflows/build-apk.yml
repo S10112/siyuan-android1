@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK (Release CN)
 
 on:
   workflow_dispatch:
@@ -22,15 +22,42 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      # 自动接受 SDK 许可
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      - name: Setup Signing Config
+      # 步骤 1：自动生成正式版签名密钥（避免 Release 打包报错）
+      - name: Generate Release Keystore & Configure Signing
         run: |
-          cp -n signings.templates.gradle signings.gradle || true
+          keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
+          cat << 'EOF' > signings.gradle
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file('../release.jks')
+                      storePassword '123456'
+                      keyAlias 'siyuan'
+                      keyPassword '123456'
+                      v1SigningEnabled true
+                      v2SigningEnabled true
+                  }
+              }
+          }
+          EOF
 
-      # 仅在仓库中不存在 app.zip 时才去主库拉取
+      # 步骤 2：修改应用名称为“金成笔记”
+      - name: Rename App to 金成笔记
+        run: |
+          # 替换 strings.xml 中的应用名称
+          find app/src/main/res/ -name "strings.xml" -exec sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">金成笔记<\/string>/g' {} +
+
+      # 步骤 3：获取或复用静态资源 app.zip
       - name: Fetch Assets if Missing
         if: "!hashFiles('app/src/main/assets/app.zip')"
         env:
@@ -46,14 +73,13 @@ jobs:
           cp temp_apk/assets/app.zip app/src/main/assets/
           rm -rf temp_apk
 
-      # 仅在仓库中不存在 kernel.aar 时才拉取主库并编译
+      # 步骤 4：编译生成核心库 kernel.aar
       - name: Build Kernel AAR if Missing
         if: "!hashFiles('app/libs/kernel.aar')"
         env:
           CGO_ENABLED: '1'
           JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8'
         run: |
-          sudo apt-get update && sudo apt-get install -y golang
           git clone --depth=1 https://github.com/siyuan-note/siyuan.git /tmp/siyuan-core
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
@@ -66,26 +92,27 @@ jobs:
           cp kernel.aar $GITHUB_WORKSPACE/app/libs/
           rm -rf /tmp/siyuan-core
 
-      # 将生成的依赖自动保存回你的仓库（只在第一次缺少时触发）
-      - name: Save Dependencies to Repo
+      # 将首次编译生成的依赖固化到仓库，避免以后重复拉取
+      - name: Cache Dependencies to Repo
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f app/src/main/assets/app.zip app/libs/kernel.aar
+          git add -f app/src/main/assets/app.zip app/libs/kernel.aar || true
           if ! git diff --cached --quiet; then
             git commit -m "chore: cache kernel.aar and app.zip for offline build"
-            git push
+            git push || true
           fi
 
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 编译 APK
-      - name: Build APK
-        run: ./gradlew assembleGoogleplayDebug -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
+      # 步骤 5：打出国内正式版（Cn 渠道 Release 正式签名包）
+      - name: Build Domestic Release APK
+        run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      - name: Upload APK Artifact
+      # 步骤 6：上传安装包
+      - name: Upload Domestic Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: siyuan-apk
-          path: app/build/outputs/apk/**/*.apk
+          name: 金成笔记-国内正式版
+          path: app/build/outputs/apk/cn/release/*.apk
