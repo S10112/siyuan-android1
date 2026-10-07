@@ -76,8 +76,8 @@ jobs:
             done
           fi
 
-      # 步骤 3：下载官方 app.zip 并精准剔除折纸 SVG，替换为你自己的新 Logo
-      - name: Extract and Replace Boot SVG
+      # 步骤 3：下载官方 app.zip 并精准注入你改好的 boot_index.html 与 logo.png
+      - name: Extract and Inject Custom Boot Screen
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -92,28 +92,16 @@ jobs:
           mkdir -p web_assets
           unzip -q temp_apk/assets/app.zip -d web_assets/
 
+          # 将你的 boot_index.html 和 logo.png 注入到前端包内
+          if [ -f boot_index.html ]; then
+            echo "正在注入自定义第二段开屏 HTML..."
+            cp boot_index.html web_assets/appearance/boot/index.html
+          fi
+
           if [ -f logo.png ]; then
             echo "正在注入 logo.png 到前端目录..."
             convert logo.png -resize 256x256 -strip web_assets/appearance/boot/logo.png
             convert logo.png -resize 256x256 -strip web_assets/stage/icon.png
-
-            BOOT_HTML="web_assets/appearance/boot/index.html"
-            if [ -f "$BOOT_HTML" ]; then
-              echo "精准替换 appearance/boot/index.html 中的折纸 SVG 图标..."
-              # 1. 隐藏原先绘制折纸线条的发光动画
-              sed -i 's/<g class="streaks"><\/g>//g' "$BOOT_HTML"
-              # 2. 将原版整个 <g class="logo">...</g> 替换为你自己的居中 logo.png
-              python3 -c "
-with open('$BOOT_HTML', 'r', encoding='utf-8') as f:
-    c = f.read()
-import re
-new_svg_content = '<image href=\"logo.png\" x=\"256\" y=\"256\" width=\"512\" height=\"512\" />'
-c = re.sub(r'<g class=\"logo\">.*?</g>', new_svg_content, c, flags=re.DOTALL)
-with open('$BOOT_HTML', 'w', encoding='utf-8') as f:
-    f.write(c)
-print('替换 SVG 内部 Logo 成功！')
-"
-            fi
           fi
 
           # 重新打成 app.zip 并放回 Android assets
