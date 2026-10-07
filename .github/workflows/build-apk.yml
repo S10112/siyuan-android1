@@ -1,7 +1,7 @@
 name: Build Android APK
 
 on:
-  workflow_dispatch: # 支持在 GitHub 网页上手动点击按钮触发打包
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -20,18 +20,18 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      # 自动接受系统自带 Android SDK 的许可协议
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses || true
 
-      # 思源需要 app.zip 资源文件，此处自动从官方最新 Release APK 中提取注入
-      - name: Prepare SiYuan Assets (app.zip & libs)
+      # 注入思源所需的 app.zip 静态资源
+      - name: Prepare SiYuan Assets (app.zip)
         run: |
           mkdir -p temp_extract
           cd temp_extract
-          # 获取官方最新 release 的 apk 下载链接并下载
           APK_URL=$(curl -s https://api.github.com/repos/siyuan-note/siyuan/releases/latest | grep "browser_download_url.*android.*\.apk" | head -n 1 | cut -d '"' -f 4)
           if [ -z "$APK_URL" ]; then
-            echo "未找到对应 APK，使用备用方式下载"
             curl -L -o official.apk https://github.com/siyuan-note/siyuan/releases/download/v3.1.20/siyuan-3.1.20-android.apk
           else
             curl -L -o official.apk "$APK_URL"
@@ -46,7 +46,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleGoogleplayDebug --stacktrace
+        run: ./gradlew assembleGoogleplayDebug --no-daemon --stacktrace
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
