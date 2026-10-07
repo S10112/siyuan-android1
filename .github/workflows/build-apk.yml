@@ -76,8 +76,8 @@ jobs:
             done
           fi
 
-      # 步骤 3：下载官方 app.zip 并精准注入你改好的 boot_index.html 与 logo.png
-      - name: Extract and Inject Custom Boot Screen
+      # 步骤 3：核心——精准将仓库中的 appearance/boot/index.html 与 logo.png 注入进 app.zip
+      - name: Inject Custom Boot Files into app.zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -92,25 +92,27 @@ jobs:
           mkdir -p web_assets
           unzip -q temp_apk/assets/app.zip -d web_assets/
 
-          # 将你的 boot_index.html 和 logo.png 注入到前端包内
-          if [ -f boot_index.html ]; then
-            echo "正在注入自定义第二段开屏 HTML..."
-            cp boot_index.html web_assets/appearance/boot/index.html
+          # 1. 复制你根目录 appearance/boot 下的所有文件到解包后的前端目录
+          if [ -d appearance/boot ]; then
+            echo "检测到仓库根目录中的 appearance/boot/，正在强制注入覆盖！"
+            cp -rf appearance/boot/* web_assets/appearance/boot/
           fi
 
+          # 2. 如果根目录有 logo.png，生成一份 logo.png 直接放进 appearance/boot 里供 index.html 读取
           if [ -f logo.png ]; then
-            echo "正在注入 logo.png 到前端目录..."
             convert logo.png -resize 256x256 -strip web_assets/appearance/boot/logo.png
+            convert logo.png -resize 256x256 -strip web_assets/appearance/boot/icon.png
             convert logo.png -resize 256x256 -strip web_assets/stage/icon.png
           fi
 
-          # 重新打成 app.zip 并放回 Android assets
+          # 3. 重新压缩回 app.zip 并放到正式 assets 目录
           cd web_assets
           zip -qr ../app.zip ./*
           cd ..
           mkdir -p app/src/main/assets/
           mv app.zip app/src/main/assets/app.zip
           rm -rf temp_apk web_assets
+          echo "前端 app.zip 注入完成并重新打包！"
 
       # 步骤 4：生成正式签名并配置
       - name: Setup Signing Configuration
