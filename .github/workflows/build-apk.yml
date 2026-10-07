@@ -30,28 +30,17 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：生成正式签名并安全填充到官方的 signings 模板中
-      - name: Setup Signing using Official Template
+      # 生成正式版 Release 签名并配置到 signings.gradle
+      - name: Setup Signing Configuration
         run: |
-          # 1. 生成标准的 Release keystore 密钥库
           keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
-          
-          # 2. 从官方模板复制一份标准的 signings.gradle
           cp signings.templates.gradle signings.gradle
-          
-          # 3. 将模板中的占位符替换为真实密钥参数
           sed -i "s|storeFile .*|storeFile file('../release.jks')|g" signings.gradle
           sed -i "s|storePassword .*|storePassword '123456'|g" signings.gradle
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 2：精准将应用名称修改为“金成笔记”
-      - name: Rename App to 金成笔记
-        run: |
-          find app/src/main/res/ -name "strings.xml" -exec sed -i 's/>思源笔记</>金成笔记</g' {} +
-          find app/src/main/res/ -name "strings.xml" -exec sed -i 's/>SiYuan</>金成笔记</g' {} +
-
-      # 步骤 3：获取静态前端资源 (app.zip)
+      # 从官方 APK 提取完整的前端 UI 界面 (app.zip)
       - name: Extract Real Assets (app.zip) from Official Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,7 +55,7 @@ jobs:
           cp temp_apk/assets/app.zip app/src/main/assets/
           rm -rf temp_apk
 
-      # 步骤 4：编译生成核心库 kernel.aar
+      # 编译底层核心库 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
@@ -87,11 +76,11 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 步骤 5：编译国内正式版（Cn 渠道 Release）
+      # 编译国内正式版（Cn 渠道 Release 正式签名安装包）
       - name: Build Domestic Release APK
         run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      # 步骤 6：上传构建出的安装包
+      # 上传生成的 APK 安装包
       - name: Upload Domestic Release APK
         uses: actions/upload-artifact@v4
         with:
