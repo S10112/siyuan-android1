@@ -29,16 +29,14 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：修改包名 (applicationId) 为 com.jincheng.note
-      - name: Change Package Name (ApplicationId)
+      # 步骤 1：安全修改安装包名 (applicationId)，不破坏 Java 源码中的 R 引用
+      - name: Change ApplicationId to com.jincheng.note
         run: |
-          NEW_PKG="com.jincheng.note"
-          # 替换 Gradle 脚本与渠道中的包名
-          find . -name "build.gradle" -exec sed -i "s/org.b3log.siyuan/${NEW_PKG}/g" {} +
-          find . -name "flavors.gradle" -exec sed -i "s/org.b3log.siyuan/${NEW_PKG}/g" {} +
-          
-          # 更新 strings.xml 里的 app_package_name 保证 FileProvider 授权一致
-          find app/src/main/res/ -name "strings.xml" -exec sed -i "s/org.b3log.siyuan/${NEW_PKG}/g" {} +
+          NEW_APP_ID="com.jincheng.note"
+          # 仅替换 build.gradle 和 flavors.gradle 里的 applicationId / applicationPackageName
+          sed -i "s/applicationId \"org.b3log.siyuan\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle || true
+          find . -name "flavors.gradle" -exec sed -i "s/\"org.b3log.siyuan\"/\"${NEW_APP_ID}\"/g" {} +
+          find app/src/main/res/ -name "strings.xml" -exec sed -i "s/>org.b3log.siyuan</>${NEW_APP_ID}</g" {} +
 
       # 步骤 2：生成干净且命名为“金成笔记”的 AndroidManifest.xml
       - name: Generate Clean AndroidManifest.xml
@@ -120,7 +118,7 @@ jobs:
                       android:name=".ShortcutActivity"
                       android:exported="true"
                       android:launchMode="singleTask"
-                      android:taskAffinity="com.jincheng.note.shorthand"
+                      android:taskAffinity="org.b3log.siyuan.shorthand"
                       android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
                       android:windowSoftInputMode="adjustResize">
                       <intent-filter>
@@ -196,7 +194,7 @@ jobs:
 
                   <provider
                       android:name="androidx.core.content.FileProvider"
-                      android:authorities="${applicationId}"
+                      android:authorities="@string/app_package_name"
                       android:grantUriPermissions="true">
                       <meta-data
                           android:name="android.support.FILE_PROVIDER_PATHS"
@@ -237,7 +235,7 @@ jobs:
           cp temp_apk/assets/app.zip app/src/main/assets/
           rm -rf temp_apk
 
-      # 步骤 5：编译 Go 核心库 kernel.aar
+      # 步骤 5：编译底层核心库 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
@@ -258,7 +256,7 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 步骤 6：打出国内正式版 (Cn Release)
+      # 步骤 6：编译国内正式版 (Cn Release)，保持 compileCnReleaseJavaWithJavac 编译完全正常
       - name: Build Domestic Release APK
         run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
