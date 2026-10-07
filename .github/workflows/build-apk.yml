@@ -30,8 +30,8 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：大幅提升版本号并安全配置包名
-      - name: Bump Version and Set Package Name
+      # 步骤 1：大幅提升版本号、安全修改包名与应用名称（使用 sed，绝不损坏清单）
+      - name: Bump Version and Configure App Info
         run: |
           NEW_APP_ID="com.jincheng.note"
           echo "正在升级版本号与包名..."
@@ -44,7 +44,10 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成 Android 原生各规格图标与引导页资源
+          # 安全替换清单中的应用名称为“金成笔记”
+          sed -i 's/android:label="[^"]*"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
+
+      # 步骤 2：生成 Android 原生各规格图标与开屏资源
       - name: Replace App Icon and Native Resources
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -103,26 +106,32 @@ jobs:
               convert logo.png -resize 256x256 -strip "$img" || true
             done
 
-            # 2. 将替换逻辑写入脚本文件运行，避免 YAML 缩进格式错误
-            echo "import os, re, base64" > run_replace.py
-            echo "with open('/tmp/logo128.png', 'rb') as f:" >> run_replace.py
-            echo "    b64_str = 'data:image/png;base64,' + base64.b64encode(f.read()).decode('utf-8')" >> run_replace.py
-            echo "replacement = f'<img src=\"{b64_str}\" style=\"width:120px;height:120px;display:block;margin:auto;\" />'" >> run_replace.py
-            echo "for root, dirs, files in os.walk('web_assets'):" >> run_replace.py
-            echo "    for file in files:" >> run_replace.py
-            echo "        if file.endswith(('.html', '.js', '.css')):" >> run_replace.py
-            echo "            path = os.path.join(root, file)" >> run_replace.py
-            echo "            with open(path, 'r', encoding='utf-8', errors='ignore') as f:" >> run_replace.py
-            echo "                content = f.read()" >> run_replace.py
-            echo "            new_content = re.sub(r'<svg[^>]*class=\"[^\"]*boot__logo[^\"]*\"[^>]*>.*?</svg>', replacement, content, flags=re.DOTALL)" >> run_replace.py
-            echo "            new_content = re.sub(r'<svg[^>]*id=\"loading\"[^>]*>.*?</svg>', replacement, new_content, flags=re.DOTALL)" >> run_replace.py
-            echo "            if new_content != content:" >> run_replace.py
-            echo "                print(f'成功替换前端加载 Logo: {path}')" >> run_replace.py
-            echo "                with open(path, 'w', encoding='utf-8') as f:" >> run_replace.py
-            echo "                    f.write(new_content)" >> run_replace.py
+            # 2. 替换前端所有加载界面的 SVG 折纸 Logo
+            python3 - << 'PY_EOF'
+import os, re, base64
 
-            python3 run_replace.py
-            rm -f run_replace.py
+with open('/tmp/logo128.png', 'rb') as f:
+    b64_str = 'data:image/png;base64,' + base64.b64encode(f.read()).decode('utf-8')
+
+replacement = f'<img src="{b64_str}" style="width:120px;height:120px;display:block;margin:auto;" />'
+
+for root, dirs, files in os.walk('web_assets'):
+    for file in files:
+        if file.endswith(('.html', '.js', '.css')):
+            path = os.path.join(root, file)
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+            new_content = re.sub(r'<svg[^>]*class="[^"]*boot__logo[^"]*"[^>]*>.*?</svg>', replacement, content, flags=re.DOTALL)
+            new_content = re.sub(r'<svg[^>]*id="loading"[^>]*>.*?</svg>', replacement, new_content, flags=re.DOTALL)
+
+            if new_content != content:
+                print(f"成功替换前端加载 Logo: {path}")
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+
+print("第二段 Web 加载 SVG 扫描与替换完成！")
+PY_EOF
           fi
 
           # 重新打成 app.zip 并放到 assets 目录
@@ -143,12 +152,7 @@ jobs:
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 5：使用 Base64 安全写入 AndroidManifest.xml（0 缩进风险）
-      - name: Generate Clean AndroidManifest.xml
-        run: |
-          echo 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPG1hbmlmZXN0IHhtbG5zOmFuZHJvaWQ9Imh0dHA6Ly9zY2hlbWFzLmFuZHJvaWQuY29tL2Fway9yZXMvYW5kcm9pZCIKICAgIHhtbG5zOnRvb2xzPSJodHRwOi8vc2NoZW1hcy5hbmRyb2lkLmNvbS90b29scyI+CgogICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5JTlRFUk5FVCIgLz4KICAgIDx1c2VzLXBlcm1pc3Npb24gYW5kcm9pZDpuYW1lPSJhbmRyb2lkLnBlcm1pc3Npb24uRk9SRUdST1VORF9TRVJWSUNFIiAvPgogICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5XQUtFX0xPQ0siIC8+CiAgICA8dXNlcy1wZXJtaXNzaW9uIGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5wZXJtaXNzaW9uLkFDQ0VTU19XSUZJX1NUQVRFIiAvPgogICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5BQ0NFU1NfTkVUV09SS19TVEFURSIgLz4KICAgIDx1c2VzLXBlcm1pc3Npb24gYW5kcm9pZDpuYW1lPSJhbmRyb2lkLnBlcm1pc3Npb24uQ0hBTkdFX1dJRklfTVVMVElDQVNUX1NUQVRFIiAvPgogICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5QT1NUX05PVElGSUNBVElPTlMiIGFuZHJvaWQ6bWluU2RrVmVyc2lvbj0iMzMiIC8+CiAgICA8dXNlcy1wZXJtaXNzaW9uIGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5wZXJtaXNzaW9uLkZPUkVHUk9VTkRfU0VSVklDRV9TUEVDSUFMX1VTRSIgLz4KCiAgICA8dXNlcy1mZWF0dXJlIGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5oYXJkd2FyZS5jYW1lcmEiIGFuZHJvaWQ6cmVxdWlyZWQ9ImZhbHNlIiAvPgogICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5DQU1FUkEiIC8+CgogICAgPHVzZXMtZmVhdHVyZSBhbmRyb2lkOm5hbWU9ImFuZHJvaWRoYXJkd2FyZS5taWNyb3Bob25lIiBhbmRyb2lkOnJlcXVpcmVkPSJmYWxzZSIgLz4KICAgIDx1c2VzLXBlcm1pc3Npb24gYW5kcm9pZDpuYW1lPSJhbmRyb2lkLnBlcm1pc3Npb24uUkVDT1JEX0FVRElPIiAvPgogICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5NT0RJRllfQVVESU9fU0VUVElOR1MiIC8+CiAgICA8dXNlcy1wZXJtaXNzaW9uIGFuZHJvaWQ6bmFtZT0iY29tLmFuZHJvaWQubGF1bmNoZXIucGVybWlzc2lvbi5JTlNUQUxMX1NIT1JUQ1VUIiAvPgogICAgPHVzZXMtcGVybWlzc2lvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQucGVybWlzc2lvbi5TQ0hFRFVMRV9FWEFDVF9BTEFSTSIgLz4KCiAgICA8YXBwbGljYXRpb24KICAgICAgICBhbmRyb2lkOm5hbWU9Ii5BcHAiCiAgICAgICAgYW5kcm9pZDplbmFibGVPbkJhY2tJbnZva2VkQ2FsbGJhY2s9InRydWUiCiAgICAgICAgYW5kcm9pZDppY29uPSJAbWlwbWFwL2ljX2xhdW5jaGVyIgogICAgICAgIGFuZHJvaWQ6cm91bmRJY29uPSJAbWlwbWFwL2ljX2xhdW5jaGVyX3JvdW5kIgogICAgICAgIGFuZHJvaWQ6bGFiZWw9IumHkemIkOeslOiuvyIKICAgICAgICBhbmRyb2lkOmxvY2FsZUNvbmZpZz0iQHhtbC9sb2NhbGVzX2NvbmZpZyIKICAgICAgICBhbmRyb2lkOm5ldHdvcmtTZWN1cml0eUNvbmZpZz0iQHhtbC9uZXR3b3JrX3NlY3VyaXR5X2NvbmZpZyIKICAgICAgICBhbmRyb2lkOnN1cHBvcnRzUnRsPSJ0cnVlIgogICAgICAgIGFuZHJvaWQ6dGhlbWU9IkBzdHlsZS9UaGVtZS5TaVB1YW4iCiAgICAgICAgYW5kcm9pZDp1c2VzQ2xlYXJ0ZXh0VHJhZmZpYz0idHJ1ZSIKICAgICAgICB0b29sczp0YXJnZXRBcGk9InRpcmFtaXN1Ij4KCiAgICAgICAgPGFjdGl2aXR5CiAgICAgICAgICAgIGFuZHJvaWRubmFtZT0iLkJvb3RBY3Rpdml0eSIKICAgICAgICAgICAgYW5kcm9pZDphdXRvUmVtb3ZlRnJvbVJlY2VudHM9InRydWUiCiAgICAgICAgICAgIGFuZHJvaWQ6Y29uZmlnQ2hhbmdlcz0ib3JpZW50YXRpb258c2NyZWVuU2l6ZSIKICAgICAgICAgICAgYW5kcm9pZDpleHBvcnRlZD0idHJ1ZSIKICAgICAgICAgICAgYW5kcm9pZDpoYXJkd2FyZUFjY2VsZXJhdGVkPSJ0cnVlIgogICAgICAgICAgICBhbmRyb2lkOnRoZW1lPSJAc3R5bGUvVGhlbWUuU2lZdWFuLkJvb3QiPgogICAgICAgICAgICA8aW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgICAgIDxhY3Rpb24gYW5kcm9pZDpuYW1lPSJhbmRyb2lkLmludGVudC5hY3Rpb24uTUFJTiIgLz4KICAgICAgICAgICAgICAgIDxjYXRlZ29yeSBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmNhdGVnb3J5LkxBVU5DSEVSIiAvPgogICAgICAgICAgICA8L2ludGVudC1maWx0ZXI+CiAgICAgICAgICAgIDxtZXRhLWRhdGEKICAgICAgICAgICAgICAgIGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5hcHAuc2hvcnRjdXRzIgogICAgICAgICAgICAgICAgYW5kcm9pZDpyZXNvdXJjZT0iQHhtbC9zaG9ydGN1dHMiIC8+CiAgICAgICAgPC9hY3Rpdml0eT4KCiAgICAgICAgPGFjdGl2aXR5CiAgICAgICAgICAgIGFuZHJvaWRubmFtZT0iLlJlZGlyZWN0VXJpUmVjZWl2ZXJBY3Rpdml0eSIKICAgICAgICAgICAgYW5kcm9pZDpleGNsdWRlRnJvbVJlY2VudHM9InRydWUiCiAgICAgICAgICAgIGFuZHJvaWQ6ZXhwb3J0ZWQ9InRydWUiCiAgICAgICAgICAgIGFuZHJvaWRub0hpc3Rvcnk9InRydWUiCiAgICAgICAgICAgIGFuZHJvaWQ6dGhlbWU9IkBzdHlsZS9UaGVtZS5TaVB1YW4uVHJhbnNwYXJlbnQiPgogICAgICAgICAgICA8aW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgICAgIDxhY3Rpb24gYW5kcm9pZDpuYW1lPSJhbmRyb2lkLmludGVudC5hY3Rpb24uVklFVyIgLz4KICAgICAgICAgICAgICAgIDxjYXRlZ29yeSBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmNhdGVnb3J5LkRFRkFVTFQiIC8+CiAgICAgICAgICAgICAgICA8Y2F0ZWdvcnkgYW5kcm9pZDpuYW1lPSJhbmRyb2lkLmludGVudC5jYXRlZ29yeS5CUk9XU0FCTEUiIC8+CiAgICAgICAgICAgICAgICA8ZGF0YSBhbmRyb2lkOnNjaGVtZT0ic2l5dWFuIiAvPgogICAgICAgICAgICA8L2ludGVudC1maWx0ZXI+CiAgICAgICAgPC9hY3Rpdml0eT4KCiAgICAgICAgPGFjdGl2aXR5CiAgICAgICAgICAgIGFuZHJvaWRubmFtZT0iLk1haW5BY3Rpdml0eSIKICAgICAgICAgICAgYW5kcm9pZDphdXRvUmVtb3ZlRnJvbVJlY2VudHM9InRydWUiCiAgICAgICAgICAgIGFuZHJvaWQ6Y29uZmlnQ2hhbmdlcz0ia2V5Ym9hcmR8a2V5Ym9hcmRIaWRkZW58c2NyZWVuTGF5b3V0fHVpTW9kZXxvcmllbnRhdGlvbnxzY3JlZW5TaXplfHNtYWxsZXN0U2NyZWVuU2l6ZSIKICAgICAgICAgICAgYW5kcm9pZDpoYXJkd2FyZUFjY2VsZXJhdGVkPSJ0cnVlIgogICAgICAgICAgICBhbmRyb2lkOnRoZW1lPSJAc3R5bGUvVGhlbWUuU2lZdWFuIgogICAgICAgICAgICBhbmRyb2lkOndpbmRvd1NvZnRJbnB1dE1vZGU9ImFkanVzdFJlc2l6ZSIgLz4KCiAgICAgICAgPGFjdGl2aXR5CiAgICAgICAgICAgIGFuZHJvaWRubmFtZT0iLlNob3J0Y3V0QWN0aXZpdHkiCiAgICAgICAgICAgIGFuZHJvaWQ6ZXhwb3J0ZWQ9InRydWUiCiAgICAgICAgICAgIGFuZHJvaWRsYXVuY2hNb2RlPSJzaW5nbGVUYXNrIgogICAgICAgICAgICBhbmRyb2lkOnRoZW1lPSJAc3R5bGUvVGhlbWUuQXBwQ29tcGF0LkRheU5pZ2h0Lk5vQWN0aW9uQmFyIgogICAgICAgICAgICBhbmRyb2lkOndpbmRvd1NvZnRJbnB1dE1vZGU9ImFkanVzdFJlc2l6ZSI+CiAgICAgICAgICAgIDxpbnRlbnQtZmlsdGVyPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5WSUVXIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6c2NoZW1lPSJzaG9ydGhhbmQiIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgPGludGVudC1maWx0ZXIgaW50ZW50LWZpbHRlcjpsYWJlbD0iQHN0cmluZy9zaG9ydGN1dF9zaG9ydGhhbmQiPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5TRU5EIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6bWltZVR5cGU9InRleHQvcGxhaW4iIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgPGludGVudC1maWx0ZXIgaW50ZW50LWZpbHRlcjpsYWJlbD0iQHN0cmluZy9zaG9ydGN1dF9zaG9ydGhhbmQiPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5TRU5EIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6bWltZVR5cGU9ImltYWdlLyoiIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgPGludGVudC1maWx0ZXIgaW50ZW50LWZpbHRlcjpsYWJlbD0iQHN0cmluZy9zaG9ydGN1dF9zaG9ydGhhbmQiPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5TRU5EX01VTFRJUExFIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6bWltZVR5cGU9ImltYWdlLyoiIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgPGludGVudC1maWx0ZXIgaW50ZW50LWZpbHRlcjpsYWJlbD0iQHN0cmluZy9zaG9ydGN1dF9zaG9ydGhhbmQiPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5TRU5EIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6bWltZVR5cGU9InZpZGVvLyoiIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgPGludGVudC1maWx0ZXIgaW50ZW50LWZpbHRlcjpsYWJlbD0iQHN0cmluZy9zaG9ydGN1dF9zaG9ydGhhbmQiPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5TRU5EX01VTFRJUExFIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6bWltZVR5cGU9InZpZGVvLyoiIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgPGludGVudC1maWx0ZXIgaW50ZW50LWZpbHRlcjpsYWJlbD0iQHN0cmluZy9zaG9ydGN1dF9zaG9ydGhhbmQiPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5TRU5EIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6bWltZVR5cGU9ImF1ZGlvLyoiIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgPGludGVudC1maWx0ZXIgaW50ZW50LWZpbHRlcjpsYWJlbD0iQHN0cmluZy9zaG9ydGN1dF9zaG9ydGhhbmQiPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5TRU5EX01VTFRJUExFIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6bWltZVR5cGU9ImF1ZGlvLyoiIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgPGludGVudC1maWx0ZXIgaW50ZW50LWZpbHRlcjpsYWJlbD0iQHN0cmluZy9zaG9ydGN1dF9zaG9ydGhhbmQiPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5TRU5EIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6bWltZVR5cGU9ImFwcGxpY2F0aW9uLyoiIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICAgICAgPGludGVudC1maWx0ZXIgaW50ZW50LWZpbHRlcjpsYWJlbD0iQHN0cmluZy9zaG9ydGN1dF9zaG9ydGhhbmQiPgogICAgICAgICAgICAgICAgPGFjdGlvbiBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuaW50ZW50LmFjdGlvbi5TRU5EX01VTFRJUExFIiAvPgogICAgICAgICAgICAgICAgPGNhdGVnb3J5IGFuZHJvaWRubmFtZT0iYW5kcm9pZC5pbnRlbnQuY2F0ZWdvcnkuREVGQVVMVCIgLz4KICAgICAgICAgICAgICAgIDxkYXRhIGFuZHJvaWQ6bWltZVR5cGU9ImFwcGxpY2F0aW9uLyoiIC8+CiAgICAgICAgICAgIDwvaW50ZW50LWZpbHRlcj4KICAgICAgICA8L2FjdGl2aXR5PgoKICAgICAgICA8c2VydmljZQogICAgICAgICAgICBhbmRyb2lkOm5hbWU9Ii5LZWVwTGl2ZVNlcnZpY2UiCiAgICAgICAgICAgIGFuZHJvaWQ6Zm9yZWdyb3VuZFNlcnZpY2VUeXBlPSJzcGVjaWFsVXNlIj4KICAgICAgICAgICAgPHByb3BlcnR5CiAgICAgICAgICAgICAgICBhbmRyb2lkOm5hbWU9ImFuZHJvaWQuYXBwLlBST1BFUlRZX1NQRUNJQUxfVVNFX0ZHU19TVUJUWVBFIgogICAgICAgICAgICAgICAgYW5kcm9pZDp2YWx1ZT0iaG9zdGluZyIgLz4KICAgICAgICA8L3NlcnZpY2U+CgoKICAgICAgICA8c2VydmljZQogICAgICAgICAgICBhbmRyb2lkOm5hbWU9Ii5LZXJuZWxTZXJ2aWNlIgogICAgICAgICAgICBhbmRyb2lkOmV4cG9ydGVkPSJmYWxzZSIKICAgICAgICAgICAgYW5kcm9pZDpmb3JlZ3JvdW5kU2VydmljZVR5cGU9InNwZWNpYWxVc2UiPgogICAgICAgICAgICA8cHJvcGVydHkKICAgICAgICAgICAgICAgIGFuZHJvaWQ6bmFtZT0iYW5kcm9pZC5hcHAuUFJPUEVSVFlfU1BFQ0lBTF9VU0VfRkdTX1NVQlRZUEUiCiAgICAgICAgICAgICAgICBhbmRyb2lkOnZhbHVlPSJob3N0aW5nIiAvPgogICAgICAgIDwvc2VydmljZT4KCgogICAgICAgIDxyZWNlaXZlciBhbmRyb2lkOm5hbWU9Ii5Ob3RpZmljYXRpb25SZWNlaXZlciIgLz4KCiAgICAgICAgPHByb3ZpZGVyCiAgICAgICAgICAgIGFuZHJvaWRubmFtZT0iYW5kcm9pZHgub29yZS5jb250ZW50LkZpbGVQcm92aWRlciIKICAgICAgICAgICAgYW5kcm9pZDphdXRob3JpdGllcz0iJHthcHBsaWNhdGlvbklkfSIKICAgICAgICAgICAgYW5kcm9pZDpncmFudFVyaVBlcm1pc3Npb25zPSJ0cnVlIj4KICAgICAgICAgICAgPG1ldGEtZGF0YQogICAgICAgICAgICAgICAgYW5kcm9pZDpuYW1lPSJhbmRyb2lkLnN1cHBvcnQuRklMRV9QUk9WSURFUl9QQVRIUyIKICAgICAgICAgICAgICAgIGFuZHJvaWRyZXNvdXJjZT0iQHhtbC9wcm92aWRlcl9wYXRocyIgLz4KICAgICAgICA8L3Byb3ZpZGVyPgoKICAgICAgICA8bWV0YS1kYXRhCiAgICAgICAgICAgIGFuZHJvaWRubmFtZT0iQ0hBTk5FTCIKICAgICAgICAgICAgYW5kcm9pZDp2YWx1ZT0iJHtDSEFOTkVMfSIgLz4KCiAgICA8L2FwcGxpY2F0aW9uPgoKPC9tYW5pZmVzdD4=' | base64 -d > app/src/main/AndroidManifest.xml
-
-      # 步骤 6：编译底层核心库 kernel.aar
+      # 步骤 5：编译底层核心库 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
@@ -169,11 +173,11 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 步骤 7：编译国内正式版 (Cn Release)
+      # 步骤 6：编译国内正式版 (Cn Release)
       - name: Build Domestic Release APK
         run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      # 步骤 8：上传 APK 安装包
+      # 步骤 7：上传 APK 安装包
       - name: Upload Domestic Release APK
         uses: actions/upload-artifact@v4
         with:
