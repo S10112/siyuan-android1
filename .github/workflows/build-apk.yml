@@ -30,7 +30,17 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：生成正式签名并填充配置
+      # 步骤 1：自动将你上传的 icon.png 强制转换为 100% 合规的 Android 标准 PNG
+      - name: Sanitize and Fix icon.png
+        run: |
+          sudo apt-get update && sudo apt-get install -y imagemagick
+          # 自动转码修复为符合 Android AAPT2 规范的标准 PNG
+          if [ -f app/src/main/res/drawable/icon.png ]; then
+            convert app/src/main/res/drawable/icon.png -strip -define png:format=png32 app/src/main/res/drawable/icon.png
+            echo "icon.png 已成功转换为合规 PNG 格式"
+          fi
+
+      # 步骤 2：生成正式签名并填充配置
       - name: Setup Signing Configuration
         run: |
           keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
@@ -40,8 +50,8 @@ jobs:
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 2：下载官方 APK 提取资产，并提取官方标准 PNG 替换修复 icon.png
-      - name: Extract Real Assets and Fix Icons
+      # 步骤 3：下载官方 APK 提取前端完整 UI 资源 (app.zip)
+      - name: Extract Real Assets from Official Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -51,20 +61,11 @@ jobs:
           APK_FILE=$(find . -maxdepth 1 -name "*.apk" | head -n 1)
           unzip -q "$APK_FILE"
           cd ..
-          
-          # 1. 注入前端完整 UI 资源
           mkdir -p app/src/main/assets/
           cp temp_apk/assets/app.zip app/src/main/assets/
-
-          # 2. 从官方 APK 还原一份标准的无损 icon.png
-          ICON_SRC=$(find temp_apk/res -name "ic_launcher.png" -o -name "icon.png" | head -n 1)
-          if [ -n "$ICON_SRC" ]; then
-            cp "$ICON_SRC" app/src/main/res/drawable/icon.png
-          fi
-
           rm -rf temp_apk
 
-      # 步骤 3：生成干净的 AndroidManifest.xml（名称锁定为 金成笔记）
+      # 步骤 4：生成干净的 AndroidManifest.xml（名称锁定为 金成笔记，包名自适应）
       - name: Generate Clean AndroidManifest.xml
         run: |
           cat << 'EOF' > app/src/main/AndroidManifest.xml
@@ -235,7 +236,7 @@ jobs:
           </manifest>
           EOF
 
-      # 步骤 4：在 Gradle 中安全修改安装包名
+      # 步骤 5：在 Gradle 中安全修改安装包名
       - name: Safely Set applicationId in Gradle
         run: |
           NEW_APP_ID="com.jincheng.note"
@@ -245,7 +246,7 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 5：编译底层核心库 kernel.aar
+      # 步骤 6：编译底层核心库 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
@@ -266,11 +267,11 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 步骤 6：编译国内正式版 (Cn Release)，使用干净的构建命令
+      # 步骤 7：编译国内正式版 (Cn Release)，使用干净的构建命令
       - name: Build Domestic Release APK
         run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      # 步骤 7：上传 APK 产物
+      # 步骤 8：上传 APK 产物
       - name: Upload Domestic Release APK
         uses: actions/upload-artifact@v4
         with:
