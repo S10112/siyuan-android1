@@ -25,45 +25,45 @@ jobs:
         with:
           go-version: '1.22'
 
+      # 自动接受 Android SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：大幅提升版本号（触发手机强刷图标缓存），安全修改安装包名
+      # 步骤 1：大幅提升版本号并安全配置包名
       - name: Bump Version and Set Package Name
         run: |
           NEW_APP_ID="com.jincheng.note"
           echo "正在升级版本号与包名..."
-          # 升级 build.gradle 里的版本配置
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
-          # 修改包名
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
           if [ -f flavors.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" flavors.gradle
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：全规格重塑应用图标、快捷方式与开屏启动页 (Splash)
+      # 步骤 2：全规格重塑应用图标，并彻底重写 activity_boot.xml 启动开屏布局
       - name: Replace App Icon and Splash Screen
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
 
           if [ -f logo.png ]; then
-            echo "检测到自定义 logo.png，正在强力覆写所有图标与启动屏..."
+            echo "检测到自定义 logo.png，正在强力覆写桌面图标与开屏画面..."
 
-            # 1. 彻底删除旧的桌面矢量图层（避免覆盖旧图标失败）
+            # 1. 删除旧的桌面图标矢量规则
             rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
             rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
             rm -f app/src/main/res/drawable/launcher_foreground.xml
             rm -f app/src/main/res/drawable-v24/launcher_foreground.xml
 
-            # 2. 生成通用 icon.png
+            # 2. 生成通用 icon.png 与开屏专用 boot_logo.png
             mkdir -p app/src/main/res/drawable
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
+            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
 
-            # 3. 生成桌面各分辨率应用图标及 shortcuts 图标
+            # 3. 生成桌面各分辨率应用图标及快捷方式图标
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
@@ -73,13 +73,35 @@ jobs:
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
             done
 
-            # 4. 生成用于开屏启动画面的高清居中 Logo
-            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
+            # 4. 彻底重写 activity_boot.xml 布局（把原版 Logo 替换为我们新生成的 boot_logo）
+            cat << 'EOF' > app/src/main/res/layout/activity_boot.xml
+            <?xml version="1.0" encoding="utf-8"?>
+            <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@color/dark">
 
-            # 5. 重写开屏页图层 boot.xml（将原生前景图彻底替换为 boot_logo.png）
-            echo 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPGxheWVyLWxpc3QgeG1sbnM6YW5kcm9pZD0iaHR0cDovL3NjaGVtYXMuYW5kcm9pZC5jb20vYXBrL3Jlcy9hbmRyb2lkIj4KICAgIDxpdGVtIGFuZHJvaWQ6ZHJhd2FibGU9IkBjb2xvci9pY19sYXVuY2hlcl9iYWNrZ3JvdW5kIiAvPgogICAgPGl0ZW0KICAgICAgICBhbmRyb2lkOndpZHRoPSIxMjhkcCIKICAgICAgICBhbmRyb2lkOmhlaWdodD0iMTI4ZHAiCiAgICAgICAgYW5kcm9pZDpncmF2aXR5PSJjZW50ZXIiCiAgICAgICAgYW5kcm9pZDpkcmF3YWJsZT0iQGRyYXdhYmxlL2Jvb3RfbG9nbyIgLz4KPC9sYXllci1saXN0Pgo=' | base64 -d > app/src/main/res/drawable/boot.xml
+                <ImageView
+                    android:id="@+id/logo"
+                    android:layout_width="128dp"
+                    android:layout_height="128dp"
+                    android:layout_centerInParent="true"
+                    android:contentDescription="@null"
+                    android:src="@drawable/boot_logo" />
 
-            echo "开屏画面与全分辨率图标已就绪！"
+                <ProgressBar
+                    android:id="@+id/progressBar"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_below="@id/logo"
+                    android:layout_centerHorizontal="true"
+                    android:layout_marginTop="32dp"
+                    android:visibility="gone" />
+
+            </RelativeLayout>
+            EOF
+
+            echo "开屏布局 activity_boot.xml 与所有图标已彻底重写为新 Logo！"
           else
             echo "未在根目录找到 logo.png"
           fi
