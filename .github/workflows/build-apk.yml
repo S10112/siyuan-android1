@@ -25,33 +25,20 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 自动接受 Android SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：自动将根目录的 logo.png 转换为 Android 标准各规格图标
-      - name: Replace App Icons
+      # 步骤 1：如果有上传 app_logo.png，自动修复转码并将其设置为全局主图标
+      - name: Configure App Icon
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
           
-          # 如果仓库根目录存在自定义 logo.png，自动生成所有分辨率的标准桌面图标与通知图标
-          if [ -f logo.png ]; then
-            echo "检测到自定义 logo.png，正在自动生成 Android 标准图标..."
-            
-            # 1. 替换 drawable/icon.png
-            mkdir -p app/src/main/res/drawable
-            convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
-            
-            # 2. 自动生成 mipmap 各分辨率的桌面图标 (ic_launcher)
-            for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
-              DIR="app/src/main/res/mipmap-${res%%:*}"
-              SIZE="${res##*:}"
-              mkdir -p "$DIR"
-              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher.png"
-              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png" || true
-            done
-            echo "新应用图标已全部生成并就绪！"
+          if [ -f app/src/main/res/drawable/app_logo.png ]; then
+            echo "检测到自定义 app_logo.png，正在转换为标准 PNG 格式..."
+            convert app/src/main/res/drawable/app_logo.png -strip -define png:format=png32 app/src/main/res/drawable/app_logo.png
+            # 兼容老版本引用
+            cp app/src/main/res/drawable/app_logo.png app/src/main/res/drawable/icon.png
           fi
 
       # 步骤 2：生成正式签名并填充配置
@@ -80,10 +67,15 @@ jobs:
           cp temp_apk/assets/app.zip app/src/main/assets/
           rm -rf temp_apk
 
-      # 步骤 4：生成 AndroidManifest.xml（名称锁定为 金成笔记）
+      # 步骤 4：生成 AndroidManifest.xml（直接绑定 @drawable/app_logo 和名称 金成笔记）
       - name: Generate Clean AndroidManifest.xml
         run: |
-          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          ICON_REF="@mipmap/ic_launcher"
+          if [ -f app/src/main/res/drawable/app_logo.png ]; then
+            ICON_REF="@drawable/app_logo"
+          fi
+
+          cat << EOF > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               xmlns:tools="http://schemas.android.com/tools">
@@ -109,7 +101,7 @@ jobs:
               <application
                   android:name=".App"
                   android:enableOnBackInvokedCallback="true"
-                  android:icon="@mipmap/ic_launcher"
+                  android:icon="${ICON_REF}"
                   android:label="金成笔记"
                   android:localeConfig="@xml/locales_config"
                   android:networkSecurityConfig="@xml/network_security_config"
