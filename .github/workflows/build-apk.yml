@@ -35,42 +35,63 @@ jobs:
         run: |
           NEW_APP_ID="com.jincheng.note"
 
-          # 1. 核心修复：将所有 gradle 脚本里的 aliyun 镜像替换为官方源，彻底消除 GitHub Actions 访问国内镜像超时
+          # 替换国内镜像为官方源
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
-          echo "Maven 仓库已全部切换回官方海外直连源！"
 
-          # 2. 确保清单文件完整并修改应用名
+          # 清单与版本
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 3. 大幅提升版本号强刷缓存
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
-          # 4. 配置包名
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
           if [ -f flavors.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" flavors.gradle
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成 Android 原生桌面图标与启动图
-      - name: Replace Native Icons
+      # 步骤 2：核心突破——彻底根除 Android 原生启动页（activity_boot）中的折纸图片！
+      - name: Purge Native Boot Logo and Generate Custom Icons
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
 
           if [ -f logo.png ]; then
-            rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-            rm -f app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-            rm -f app/src/main/res/drawable/launcher_foreground.xml
-            rm -f app/src/main/res/drawable-v24/launcher_foreground.xml
+            echo "正在彻底清空所有原版折纸矢量 XML..."
+            # 删除所有可能包含思源折纸矢量的原生资源文件
+            find app/src/main/res/ -type f \( -name "*boot*.xml" -o -name "*logo*.xml" -o -name "*launcher*.xml" \) -delete
 
+            # 生成标准的 PNG 启动图与应用图标
             mkdir -p app/src/main/res/drawable
-            convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
+            convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
+            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/logo.png
 
+            # 强行重写 activity_boot.xml 原生布局，直接绑定我们的 boot_logo.png
+            BOOT_XML=$(find app/src/main/res/ -name "activity_boot.xml" | head -n 1)
+            if [ -n "$BOOT_XML" ]; then
+              echo "检测到原生布局 $BOOT_XML，重写原生开屏页面为新 Logo..."
+              cat << 'EOF' > "$BOOT_XML"
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#1e1e1e">
+
+    <ImageView
+        android:id="@+id/iv_logo"
+        android:layout_width="140dp"
+        android:layout_height="140dp"
+        android:layout_gravity="center"
+        android:src="@drawable/boot_logo"
+        android:contentDescription="@null" />
+</FrameLayout>
+EOF
+            fi
+
+            # 生成各分辨率的桌面图标
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
@@ -79,9 +100,10 @@ jobs:
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png"
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
             done
+            echo "原生层开屏与桌面图标替换完成！"
           fi
 
-      # 步骤 3：以官方完整资源为底包，彻底重写开屏 index.html（绝对无折纸、绝不报 404）
+      # 步骤 3：第二段前端 WebView 开屏页替换（Base64 注入，保留完整资源防 404）
       - name: Prepare Assets and Inject Pure Custom Splash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -97,7 +119,6 @@ jobs:
           mkdir -p web_assets
           unzip -q temp_apk/assets/app.zip -d web_assets/
 
-          # 创建 Python 脚本将 Base64 Logo 写入全新的 boot index.html
           echo "import base64" > write_boot.py
           echo "with open('logo.png', 'rb') as f:" >> write_boot.py
           echo "    b64 = base64.b64encode(f.read()).decode('utf-8')" >> write_boot.py
@@ -126,12 +147,11 @@ jobs:
           echo "</script></body></html>'''" >> write_boot.py
           echo "with open('web_assets/appearance/boot/index.html', 'w', encoding='utf-8') as f:" >> write_boot.py
           echo "    f.write(html)" >> write_boot.py
-          echo "print('全新开屏覆盖完成，原版 SVG 已彻底移除！')" >> write_boot.py
+          echo "print('前端网页开屏页替换完成！')" >> write_boot.py
 
           python3 write_boot.py
           rm -f write_boot.py
 
-          # 重新打成 app.zip 并放入 assets 目录
           mkdir -p app/src/main/assets/
           cd web_assets
           zip -qr "$GITHUB_WORKSPACE/app/src/main/assets/app.zip" ./*
@@ -139,7 +159,7 @@ jobs:
 
           rm -rf temp_apk web_assets
 
-      # 步骤 4：生成正式签名并配置
+      # 步骤 4：配置签名
       - name: Setup Signing Configuration
         run: |
           keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
@@ -170,11 +190,11 @@ jobs:
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
 
-      # 步骤 6：编译国内正式版 (Cn Release)
+      # 步骤 6：编译国内正式版
       - name: Build Domestic Release APK
         run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      # 步骤 7：上传 APK 安装包
+      # 步骤 7：上传 APK
       - name: Upload Domestic Release APK
         uses: actions/upload-artifact@v4
         with:
