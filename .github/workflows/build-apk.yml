@@ -40,7 +40,7 @@ jobs:
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 大幅提升版本号强刷系统缓存
+          # 大幅提升版本号强刷缓存
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
@@ -76,25 +76,48 @@ jobs:
             done
           fi
 
-      # 步骤 3：直接拉取你改好的 S10112/siyuan 主库，打包生成 app.zip
-      - name: Fetch Frontend Assets from Your Siyuan Repo and Package
+      # 步骤 3：下载官方完整前端包并精准注入你的定制启动页与 Logo
+      - name: Extract Official Assets and Apply Boot Screen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sudo apt-get install -y zip unzip
-          echo "正在克隆你自己的主库 S10112/siyuan..."
-          git clone --depth=1 https://github.com/S10112/siyuan.git /tmp/siyuan-custom
+          mkdir -p temp_apk
+          cd temp_apk
+          gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
+          APK_FILE=$(find . -maxdepth 1 -name "*.apk" | head -n 1)
+          unzip -q "$APK_FILE"
+          cd ..
+          
+          mkdir -p web_assets
+          unzip -q temp_apk/assets/app.zip -d web_assets/
 
-          # 如果根目录有 logo.png，自动为前端生成匹配的 logo.png
-          if [ -f logo.png ]; then
-            convert logo.png -resize 256x256 -strip /tmp/siyuan-custom/app/appearance/boot/logo.png || true
-            convert logo.png -resize 256x256 -strip /tmp/siyuan-custom/app/appearance/boot/icon.png || true
+          # 1. 优先拉取你在主库 S10112/siyuan 中改好的 boot 页面文件
+          echo "正在从 S10112/siyuan 拉取你改好的开屏文件..."
+          git clone --depth=1 https://github.com/S10112/siyuan.git /tmp/siyuan-custom || true
+          if [ -d /tmp/siyuan-custom/app/appearance/boot ]; then
+            cp -rf /tmp/siyuan-custom/app/appearance/boot/* web_assets/appearance/boot/ || true
           fi
 
-          # 按照官方指南把 app/ 目录打包成 app.zip 并放入 assets
+          # 2. 如果当前 siyuan-android1 根目录也有 appearance/boot，一并覆盖
+          if [ -d appearance/boot ]; then
+            cp -rf appearance/boot/* web_assets/appearance/boot/ || true
+          fi
+
+          # 3. 将你的 logo.png 生成放入 boot 目录以供 index.html 正常显示
+          if [ -f logo.png ]; then
+            convert logo.png -resize 256x256 -strip web_assets/appearance/boot/logo.png
+            convert logo.png -resize 256x256 -strip web_assets/appearance/boot/icon.png
+          fi
+
+          # 4. 重新打包为完整的 app.zip 并放入 Android 资源目录
           mkdir -p app/src/main/assets/
-          cd /tmp/siyuan-custom/app
+          cd web_assets
           zip -qr "$GITHUB_WORKSPACE/app/src/main/assets/app.zip" ./*
           cd "$GITHUB_WORKSPACE"
-          echo "app.zip 已经使用你修改好的前端代码完成打包！"
+
+          rm -rf temp_apk web_assets
+          echo "带有你自定义开屏且完整不报 404 的 app.zip 打包完成！"
 
       # 步骤 4：生成正式签名并配置
       - name: Setup Signing Configuration
@@ -106,7 +129,7 @@ jobs:
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 5：使用你自己的主库编译底层 kernel.aar
+      # 步骤 5：编译底层核心库 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
