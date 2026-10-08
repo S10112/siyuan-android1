@@ -76,12 +76,12 @@ jobs:
             done
           fi
 
-      # 步骤 3：下载官方完整前端包并精准注入你的定制启动页与 Logo
-      - name: Extract Official Assets and Apply Boot Screen
+      # 步骤 3：下载官方完整资源，并用 Base64 将开屏 HTML 强行覆盖为你自己的 Logo！
+      - name: Extract Official Assets and Hardcode Custom Splash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sudo apt-get install -y zip unzip
+          sudo apt-get install -y zip unzip python3
           mkdir -p temp_apk
           cd temp_apk
           gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
@@ -92,32 +92,122 @@ jobs:
           mkdir -p web_assets
           unzip -q temp_apk/assets/app.zip -d web_assets/
 
-          # 1. 优先拉取你在主库 S10112/siyuan 中改好的 boot 页面文件
-          echo "正在从 S10112/siyuan 拉取你改好的开屏文件..."
-          git clone --depth=1 https://github.com/S10112/siyuan.git /tmp/siyuan-custom || true
-          if [ -d /tmp/siyuan-custom/app/appearance/boot ]; then
-            cp -rf /tmp/siyuan-custom/app/appearance/boot/* web_assets/appearance/boot/ || true
-          fi
-
-          # 2. 如果当前 siyuan-android1 根目录也有 appearance/boot，一并覆盖
-          if [ -d appearance/boot ]; then
-            cp -rf appearance/boot/* web_assets/appearance/boot/ || true
-          fi
-
-          # 3. 将你的 logo.png 生成放入 boot 目录以供 index.html 正常显示
           if [ -f logo.png ]; then
-            convert logo.png -resize 256x256 -strip web_assets/appearance/boot/logo.png
-            convert logo.png -resize 256x256 -strip web_assets/appearance/boot/icon.png
+            echo "正在将 logo.png 编码并写入 appearance/boot/index.html..."
+            
+            python3 - << 'PY_EOF'
+import base64
+
+with open('logo.png', 'rb') as f:
+    b64 = base64.b64encode(f.read()).decode('utf-8')
+data_uri = f"data:image/png;base64,{b64}"
+
+html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+    <style>
+        html, body {{
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            background: #1e1e1e;
+        }}
+        #bg {{
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            width: 100%;
+        }}
+        #bg img {{
+            width: 130px;
+            height: 130px;
+            object-fit: contain;
+            border-radius: 20px;
+        }}
+        #progressWrap {{
+            position: absolute;
+            bottom: env(safe-area-inset-bottom);
+            width: 100%;
+        }}
+        #progressTrack {{
+            height: 2px;
+            background-color: #2a2c2f;
+            width: 100%;
+        }}
+        #progress {{
+            height: 2px;
+            background-color: #3b3e43;
+            box-shadow: 0 0 8px rgba(59, 62, 67, 0.6);
+            width: 0;
+            transition: width 0.3s;
+        }}
+        #details {{
+            color: #9aa0a6;
+            padding: 8px;
+            font-size: 12px;
+            font-family: sans-serif;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+<div id="bg">
+    <img src="{data_uri}" alt="Logo" />
+</div>
+<div id="progressWrap">
+    <div id="progressTrack"></div>
+    <div id="progress"></div>
+    <div id="details"></div>
+</div>
+<script>
+    const redirect = () => {{
+        window.location.replace('http://127.0.0.1:' + location.port);
+    }};
+    const progressEl = document.getElementById('progress');
+    const detailsEl = document.getElementById('details');
+    progressEl.style.width = '20%';
+    detailsEl.textContent = 'Booting kernel...';
+
+    const es = new EventSource('http://127.0.0.1:' + location.port + '/api/system/bootProgressSSE');
+    es.onmessage = (event) => {{
+        const d = JSON.parse(event.data);
+        progressEl.style.width = d.progress + '%';
+        detailsEl.textContent = d.details;
+        if (d.progress >= 100) {{
+            es.close();
+            setTimeout(redirect, 150);
+        }}
+    }};
+    es.onerror = () => {{
+        es.close();
+        setTimeout(() => {{
+            const retry = new EventSource('http://127.0.0.1:' + location.port + '/api/system/bootProgressSSE');
+            retry.onmessage = es.onmessage;
+        }}, 200);
+    }};
+</script>
+</body>
+</html>
+"""
+
+with open('web_assets/appearance/boot/index.html', 'w', encoding='utf-8') as f:
+    f.write(html_content)
+
+print("全新极简无折纸开屏已生成并强行覆盖！")
+PY_EOF
+
           fi
 
-          # 4. 重新打包为完整的 app.zip 并放入 Android 资源目录
+          # 重新打成 app.zip 并放入 assets 目录
           mkdir -p app/src/main/assets/
           cd web_assets
           zip -qr "$GITHUB_WORKSPACE/app/src/main/assets/app.zip" ./*
           cd "$GITHUB_WORKSPACE"
 
           rm -rf temp_apk web_assets
-          echo "带有你自定义开屏且完整不报 404 的 app.zip 打包完成！"
 
       # 步骤 4：生成正式签名并配置
       - name: Setup Signing Configuration
@@ -129,22 +219,23 @@ jobs:
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 5：编译底层核心库 kernel.aar
+      # 步骤 5：克隆官方主库仅用于编译底层 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
           JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8'
         run: |
+          git clone --depth=1 https://github.com/siyuan-note/siyuan.git /tmp/siyuan-core
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
           export PATH=$PATH:$(go env GOPATH)/bin
           export ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/* | sort -V | tail -n 1)
           gomobile init
-          cd /tmp/siyuan-custom/kernel
+          cd /tmp/siyuan-core/kernel
           gomobile bind -tags "fts5 sqlcipher" -ldflags "-s -w" -v -o kernel.aar -target android/arm64 -androidapi 26 ./mobile/
           mkdir -p $GITHUB_WORKSPACE/app/libs/
           cp kernel.aar $GITHUB_WORKSPACE/app/libs/
-          rm -rf /tmp/siyuan-custom
+          rm -rf /tmp/siyuan-core
 
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
