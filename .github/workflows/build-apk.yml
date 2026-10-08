@@ -30,21 +30,18 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：配置应用名、包名与高版本号
+      # 步骤 1：拉取干净清单，配置包名、版本号与应用名称
       - name: Configure App Info
         run: |
           NEW_APP_ID="com.jincheng.note"
           
-          # 确保清单文件完整并修改应用名
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 大幅提升版本号强刷缓存
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
-          # 配置包名
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
           if [ -f flavors.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" flavors.gradle
@@ -76,8 +73,8 @@ jobs:
             done
           fi
 
-      # 步骤 3：下载官方完整资源，并用 Base64 将开屏 HTML 强行覆盖为你自己的 Logo！
-      - name: Extract Official Assets and Hardcode Custom Splash
+      # 步骤 3：以官方完整资源为底包，彻底重写开屏 index.html（绝对无折纸、绝不报 404）
+      - name: Prepare Assets and Inject Pure Custom Splash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -92,114 +89,39 @@ jobs:
           mkdir -p web_assets
           unzip -q temp_apk/assets/app.zip -d web_assets/
 
-          if [ -f logo.png ]; then
-            echo "正在将 logo.png 编码并写入 appearance/boot/index.html..."
-            
-            python3 - << 'PY_EOF'
-import base64
+          # 创建 Python 脚本将 Base64 Logo 写入全新的 boot index.html
+          echo "import base64" > write_boot.py
+          echo "with open('logo.png', 'rb') as f:" >> write_boot.py
+          echo "    b64 = base64.b64encode(f.read()).decode('utf-8')" >> write_boot.py
+          echo "uri = f'data:image/png;base64,{b64}'" >> write_boot.py
+          echo "html = '''<!DOCTYPE html>" >> write_boot.py
+          echo "<html><head><meta charset=\"UTF-8\">" >> write_boot.py
+          echo "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0,maximum-scale=1.0,viewport-fit=cover\">" >> write_boot.py
+          echo "<style>" >> write_boot.py
+          echo "html,body{height:100%;margin:0;overflow:hidden;background:#1e1e1e;}" >> write_boot.py
+          echo "#bg{display:flex;justify-content:center;align-items:center;height:100%;width:100%;}" >> write_boot.py
+          echo "#bg img{width:140px;height:140px;object-fit:contain;border-radius:24px;box-shadow:0 6px 24px rgba(0,0,0,0.4);}" >> write_boot.py
+          echo "#progressWrap{position:absolute;bottom:env(safe-area-inset-bottom);width:100%;}" >> write_boot.py
+          echo "#progressTrack{height:2px;background-color:#2a2c2f;width:100%;}" >> write_boot.py
+          echo "#progress{height:2px;background-color:#3b3e43;box-shadow:0 0 8px rgba(59,62,67,0.6);width:0;transition:width 0.3s;}" >> write_boot.py
+          echo "#details{color:#9aa0a6;padding:8px;font-size:12px;font-family:sans-serif;text-align:center;}" >> write_boot.py
+          echo "</style></head><body>" >> write_boot.py
+          echo "<div id=\"bg\"><img src=\"''' + uri + '''\" alt=\"Logo\"></div>" >> write_boot.py
+          echo "<div id=\"progressWrap\"><div id=\"progressTrack\"></div><div id=\"progress\"></div><div id=\"details\"></div></div>" >> write_boot.py
+          echo "<script>" >> write_boot.py
+          echo "const redirect=()=>{window.location.replace('http://127.0.0.1:'+location.port);};" >> write_boot.py
+          echo "const p=document.getElementById('progress'),d=document.getElementById('details');" >> write_boot.py
+          echo "p.style.width='25%';d.textContent='Booting kernel...';" >> write_boot.py
+          echo "const es=new EventSource('http://127.0.0.1:'+location.port+'/api/system/bootProgressSSE');" >> write_boot.py
+          echo "es.onmessage=(e)=>{const data=JSON.parse(e.data);p.style.width=data.progress+'%';d.textContent=data.details;if(data.progress>=100){es.close();setTimeout(redirect,150);}};" >> write_boot.py
+          echo "es.onerror=()=>{es.close();setTimeout(()=>{const r=new EventSource('http://127.0.0.1:'+location.port+'/api/system/bootProgressSSE');r.onmessage=es.onmessage;},300);};" >> write_boot.py
+          echo "</script></body></html>'''" >> write_boot.py
+          echo "with open('web_assets/appearance/boot/index.html', 'w', encoding='utf-8') as f:" >> write_boot.py
+          echo "    f.write(html)" >> write_boot.py
+          echo "print('全新开屏覆盖完成，原版 SVG 已彻底移除！')" >> write_boot.py
 
-with open('logo.png', 'rb') as f:
-    b64 = base64.b64encode(f.read()).decode('utf-8')
-data_uri = f"data:image/png;base64,{b64}"
-
-html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
-    <style>
-        html, body {{
-            height: 100%;
-            margin: 0;
-            overflow: hidden;
-            background: #1e1e1e;
-        }}
-        #bg {{
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100%;
-            width: 100%;
-        }}
-        #bg img {{
-            width: 130px;
-            height: 130px;
-            object-fit: contain;
-            border-radius: 20px;
-        }}
-        #progressWrap {{
-            position: absolute;
-            bottom: env(safe-area-inset-bottom);
-            width: 100%;
-        }}
-        #progressTrack {{
-            height: 2px;
-            background-color: #2a2c2f;
-            width: 100%;
-        }}
-        #progress {{
-            height: 2px;
-            background-color: #3b3e43;
-            box-shadow: 0 0 8px rgba(59, 62, 67, 0.6);
-            width: 0;
-            transition: width 0.3s;
-        }}
-        #details {{
-            color: #9aa0a6;
-            padding: 8px;
-            font-size: 12px;
-            font-family: sans-serif;
-            text-align: center;
-        }}
-    </style>
-</head>
-<body>
-<div id="bg">
-    <img src="{data_uri}" alt="Logo" />
-</div>
-<div id="progressWrap">
-    <div id="progressTrack"></div>
-    <div id="progress"></div>
-    <div id="details"></div>
-</div>
-<script>
-    const redirect = () => {{
-        window.location.replace('http://127.0.0.1:' + location.port);
-    }};
-    const progressEl = document.getElementById('progress');
-    const detailsEl = document.getElementById('details');
-    progressEl.style.width = '20%';
-    detailsEl.textContent = 'Booting kernel...';
-
-    const es = new EventSource('http://127.0.0.1:' + location.port + '/api/system/bootProgressSSE');
-    es.onmessage = (event) => {{
-        const d = JSON.parse(event.data);
-        progressEl.style.width = d.progress + '%';
-        detailsEl.textContent = d.details;
-        if (d.progress >= 100) {{
-            es.close();
-            setTimeout(redirect, 150);
-        }}
-    }};
-    es.onerror = () => {{
-        es.close();
-        setTimeout(() => {{
-            const retry = new EventSource('http://127.0.0.1:' + location.port + '/api/system/bootProgressSSE');
-            retry.onmessage = es.onmessage;
-        }}, 200);
-    }};
-</script>
-</body>
-</html>
-"""
-
-with open('web_assets/appearance/boot/index.html', 'w', encoding='utf-8') as f:
-    f.write(html_content)
-
-print("全新极简无折纸开屏已生成并强行覆盖！")
-PY_EOF
-
-          fi
+          python3 write_boot.py
+          rm -f write_boot.py
 
           # 重新打成 app.zip 并放入 assets 目录
           mkdir -p app/src/main/assets/
@@ -219,7 +141,7 @@ PY_EOF
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 5：克隆官方主库仅用于编译底层 kernel.aar
+      # 步骤 5：编译底层 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
