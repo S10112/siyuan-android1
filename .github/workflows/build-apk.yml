@@ -39,7 +39,7 @@ jobs:
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 清单更名与版本号
+          # 清单更名与高版本号（强制冲刷手机系统缓存）
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
@@ -53,22 +53,23 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：安全处理原生图标，彻底拔除原生层折纸矢量（绝对不删文件，避免闪退）
-      - name: Replace Native Icons Safely
+      # 步骤 2：全套替换 Android 桌面自适应图标（修复桌面仍是折纸图标的问题）
+      - name: Replace Native Icons Completely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
 
           if [ -f logo.png ]; then
             mkdir -p app/src/main/res/drawable
 
-            # 生成位图
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
+            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/custom_logo.png
 
-            # 根治原生层折纸：将 logo.xml 的 path 路径清空
-            find app/src/main/res/ -name "logo.xml" -exec sed -i '/<path/d' {} + || true
+            # 清空所有原生矢量内部的 path，消除原生层折纸
+            find app/src/main/res/ -name "*logo*.xml" -exec sed -i '/<path/d' {} + || true
+            find app/src/main/res/ -name "*launcher_foreground.xml" -exec sed -i '/<path/d' {} + || true
 
-            # 生成桌面各规格图标
+            # 生成各分辨率的桌面图标与圆角图标
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
@@ -79,12 +80,12 @@ jobs:
             done
           fi
 
-      # 步骤 3：准备完整前端 assets，避开 sed 超长参数，直接拷贝图片并替换 HTML 标签
-      - name: Extract Official Assets and Clean Splash SVG
+      # 步骤 3：下载完整前端包，Python 全局扫描将所有 HTML/JS 内的折纸特征物理抹除！
+      - name: Extract Official Assets and Deep Clean Siyuan Origami
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sudo apt-get install -y zip unzip
+          sudo apt-get install -y zip unzip python3
           mkdir -p temp_apk
           cd temp_apk
           gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
@@ -95,27 +96,63 @@ jobs:
           mkdir -p web_assets
           unzip -q temp_apk/assets/app.zip -d web_assets/
 
-          TARGET_HTML="web_assets/appearance/boot/index.html"
-          if [ -f "$TARGET_HTML" ]; then
-            echo "正在清洗 appearance/boot/index.html..."
-
-            # 1. 直接将 logo.png 复制到 boot 目录下，不走超长 base64 参数
-            if [ -f logo.png ]; then
-              convert logo.png -resize 256x256 -strip web_assets/appearance/boot/logo.png
-              convert logo.png -resize 256x256 -strip web_assets/appearance/boot/icon.png
-              convert logo.png -resize 256x256 -strip web_assets/stage/icon.png
-            fi
-
-            # 2. 彻底删除原版绘制折纸的 path 矢量与 streaks 光带
-            sed -i '/<path fill="#d23f31"/d' "$TARGET_HTML"
-            sed -i '/<path fill="#3b3e43"/d' "$TARGET_HTML"
-            sed -i '/<g class="streaks">/,/<\/g>/d' "$TARGET_HTML"
-            
-            # 3. 将 svg 容器直接换成图片标签
-            sed -i 's|<div id="bg">.*|<div id="bg"><img src="logo.png" style="width:130px;height:130px;object-fit:contain;margin:auto;display:block;border-radius:20px;" /></div>|g' "$TARGET_HTML"
-            sed -i '/<svg/,/<\/svg>/d' "$TARGET_HTML"
+          # 拷贝你的新 Logo 到前端多个关键位置
+          if [ -f logo.png ]; then
+            convert logo.png -resize 256x256 -strip web_assets/appearance/boot/logo.png
+            convert logo.png -resize 256x256 -strip web_assets/appearance/boot/icon.png
+            convert logo.png -resize 256x256 -strip web_assets/stage/icon.png
+            mkdir -p web_assets/stage/build/mobile/
+            convert logo.png -resize 256x256 -strip web_assets/stage/build/mobile/icon.png
+            convert logo.png -resize 256x256 -strip web_assets/stage/build/mobile/logo.png
           fi
 
+          # 使用 Python 全局扫描清除所有页面中的折纸特征
+          python3 - << 'PY_EOF'
+          import os, re
+
+          web_dir = 'web_assets'
+          # 思源折纸的核心 path 特征点
+          patterns_to_remove = [
+              r'd="M37\.052[^"]*"',
+              r'd="M306\.909[^"]*"',
+              r'd="M512[^"]*"',
+              r'd="M717\.091[^"]*"',
+              r'<path fill="#d23f31"[^>]*></path>',
+              r'<path fill="#3b3e43"[^>]*></path>',
+              r'<g class="streaks">.*?</g>',
+              r'<g class="logo">.*?</g>'
+          ]
+
+          # 替换标记为你的新图标
+          img_replacement = '<img src="logo.png" style="width:130px;height:130px;object-fit:contain;margin:auto;display:block;border-radius:20px;" />'
+
+          for root, dirs, files in os.walk(web_dir):
+              for file in files:
+                  if file.endswith(('.html', '.htm', '.js')):
+                      filepath = os.path.join(root, file)
+                      try:
+                          with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                              content = f.read()
+
+                          original_len = len(content)
+                          # 1. 清理已知的折纸特征
+                          for p in patterns_to_remove:
+                              content = re.sub(p, '', content, flags=re.DOTALL)
+
+                          # 2. 如果是 boot 或 mobile 的 index.html，直接把整个背景容器替换为你的新 Logo
+                          if file == 'index.html' and ('boot' in root or 'mobile' in root):
+                              content = re.sub(r'<div id="bg">.*?</div>', f'<div id="bg">{img_replacement}</div>', content, flags=re.DOTALL)
+                              content = re.sub(r'<svg[^>]*>.*?</svg>', img_replacement, content, flags=re.DOTALL)
+
+                          if len(content) != original_len:
+                              with open(filepath, 'w', encoding='utf-8') as f:
+                                  f.write(content)
+                              print(f"成功清洗前端文件: {filepath}")
+                      except Exception as e:
+                          pass
+          PY_EOF
+
+          # 重新打成 app.zip 并放入 Android assets 目录
           mkdir -p app/src/main/assets/
           cd web_assets
           zip -qr "$GITHUB_WORKSPACE/app/src/main/assets/app.zip" ./*
