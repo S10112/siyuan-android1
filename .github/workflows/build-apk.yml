@@ -30,7 +30,7 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：修复 Maven 海外源、配置应用名与包名
+      # 步骤 1：修复 Maven 海外直连、配置应用名与包名
       - name: Configure App Info and Fix Maven Mirrors
         run: |
           NEW_APP_ID="com.jincheng.note"
@@ -39,12 +39,11 @@ jobs:
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 清单安全更名
+          # 清单更名与高版本号
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 强刷缓存的高版本号
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
@@ -55,70 +54,17 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：核心修复——彻底替换原生窗口背景与自适应桌面图标（根除折纸与机器人图标）
-      - name: Completely Rebuild Native Splash and Icons
+      # 步骤 2：生成位图资源并通过独立脚本修复原生层启动与自适应图标
+      - name: Rebuild Native Icons and Splash
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
 
           if [ -f logo.png ]; then
-            echo "正在重构原生启动图与自适应图标..."
             mkdir -p app/src/main/res/drawable
 
-            # 1. 生成各层级关键位图
-            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/custom_splash_logo.png
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
-            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/logo.png
 
-            # 2. 覆盖所有原生 windowBackground 引用的 splash.xml / splash_screen.xml
-            find app/src/main/res/ -name "*splash*.xml" -o -name "*boot*.xml" | while read -r file; do
-              if grep -q "layer-list" "$file" || grep -q "FrameLayout" "$file"; then
-                echo "重写开屏布局: $file"
-                cat << 'EOF' > "$file"
-<?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/black" />
-    <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@drawable/custom_splash_logo" />
-    </item>
-</layer-list>
-EOF
-              fi
-            done
-
-            # 3. 彻底重写原生 activity_boot.xml
-            find app/src/main/res/layout -name "activity_boot.xml" | while read -r layout_file; do
-              cat << 'EOF' > "$layout_file"
-<?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#1e1e1e">
-    <ImageView
-        android:id="@+id/iv_logo"
-        android:layout_width="140dp"
-        android:layout_height="140dp"
-        android:layout_gravity="center"
-        android:src="@drawable/custom_splash_logo"
-        android:contentDescription="@null" />
-</FrameLayout>
-EOF
-            done
-
-            # 4. 生成标准自适应图标前景层（避免回退到 Android 默认小机器人）
-            mkdir -p app/src/main/res/drawable-v24 app/src/main/res/mipmap-anydpi-v26
-            cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/white" />
-    <foreground android:drawable="@drawable/icon" />
-</adaptive-icon>
-EOF
-            cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
-
-            # 5. 生成各分辨率常规位图图标
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
@@ -127,14 +73,16 @@ EOF
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png"
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
             done
+
+            python3 fix_assets.py
           fi
 
-      # 步骤 3：下载完整官方前端 assets，全局清理 Web 端的折纸 SVG
-      - name: Extract Official Assets and Deep Clean Web SVG
+      # 步骤 3：下载完整前端产物，全局清洗 Web 端折纸
+      - name: Extract Official Assets and Clean Web SVG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sudo apt-get install -y zip unzip
+          sudo apt-get install -y zip unzip python3
           mkdir -p temp_apk
           cd temp_apk
           gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
@@ -149,12 +97,12 @@ EOF
             convert logo.png -resize 256x256 -strip web_assets/appearance/boot/logo.png
             convert logo.png -resize 256x256 -strip web_assets/appearance/boot/icon.png
             convert logo.png -resize 256x256 -strip web_assets/stage/icon.png
+            mkdir -p web_assets/stage/build/mobile/
+            convert logo.png -resize 256x256 -strip web_assets/stage/build/mobile/icon.png
+            convert logo.png -resize 256x256 -strip web_assets/stage/build/mobile/logo.png
           fi
 
-          # 清理前端开屏与主界面模板中的折纸矢量
-          find web_assets/ -name "*.html" -exec sed -i '/<path fill="#d23f31"/d' {} +
-          find web_assets/ -name "*.html" -exec sed -i '/<path fill="#3b3e43"/d' {} +
-          find web_assets/ -name "*.html" -exec sed -i 's|<div id="bg">.*|<div id="bg"><img src="logo.png" style="width:130px;height:130px;object-fit:contain;margin:auto;display:block;border-radius:20px;" /></div>|g' {} +
+          python3 fix_assets.py web
 
           mkdir -p app/src/main/assets/
           cd web_assets
