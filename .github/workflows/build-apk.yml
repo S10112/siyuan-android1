@@ -30,18 +30,26 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：拉取干净清单，配置包名、版本号与应用名称
-      - name: Configure App Info
+      # 步骤 1：修复 Maven 源（彻底消除 aliyun 网络死锁）、拉取干净清单、配置包名与版本号
+      - name: Configure App Info and Fix Maven Mirrors
         run: |
           NEW_APP_ID="com.jincheng.note"
-          
+
+          # 1. 核心修复：将所有 gradle 脚本里的 aliyun 镜像替换为官方源，彻底消除 GitHub Actions 访问国内镜像超时
+          find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
+          find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
+          echo "Maven 仓库已全部切换回官方海外直连源！"
+
+          # 2. 确保清单文件完整并修改应用名
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
+          # 3. 大幅提升版本号强刷缓存
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
+          # 4. 配置包名
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
           if [ -f flavors.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" flavors.gradle
