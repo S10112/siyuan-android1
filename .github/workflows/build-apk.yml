@@ -25,6 +25,7 @@ jobs:
         with:
           go-version: '1.22'
 
+      # 自动接受 Android SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
@@ -64,7 +65,7 @@ jobs:
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
 
-            # 根治原生层折纸：将 logo.xml 的 path 路径清空，消除原生折纸
+            # 根治原生层折纸：将 logo.xml 的 path 路径清空
             find app/src/main/res/ -name "logo.xml" -exec sed -i '/<path/d' {} + || true
 
             # 生成桌面各规格图标
@@ -78,12 +79,12 @@ jobs:
             done
           fi
 
-      # 步骤 3：准备完整前端 assets，彻底清除网页端折纸 SVG
+      # 步骤 3：准备完整前端 assets，避开 sed 超长参数，直接拷贝图片并替换 HTML 标签
       - name: Extract Official Assets and Clean Splash SVG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sudo apt-get install -y zip unzip python3
+          sudo apt-get install -y zip unzip
           mkdir -p temp_apk
           cd temp_apk
           gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
@@ -94,20 +95,25 @@ jobs:
           mkdir -p web_assets
           unzip -q temp_apk/assets/app.zip -d web_assets/
 
-          # 彻底清除 HTML 中的折纸 SVG 和光带动画
           TARGET_HTML="web_assets/appearance/boot/index.html"
           if [ -f "$TARGET_HTML" ]; then
             echo "正在清洗 appearance/boot/index.html..."
-            sed -i '/<g class="streaks">/,/<\/g>/d' "$TARGET_HTML"
-            sed -i '/<g class="logo">/,/<\/g>/d' "$TARGET_HTML"
-            sed -i 's/<svg[^>]*>/<div id="bg_custom">/g' "$TARGET_HTML"
-            sed -i 's/<\/svg>/<\/div>/g' "$TARGET_HTML"
 
-            # 如果有 logo.png，将 Base64 直接插入中心
+            # 1. 直接将 logo.png 复制到 boot 目录下，不走超长 base64 参数
             if [ -f logo.png ]; then
-              B64=$(base64 -w 0 logo.png)
-              sed -i "s|<div id=\"bg_custom\">|<div id=\"bg_custom\"><img src=\"data:image/png;base64,${B64}\" style=\"width:140px;height:140px;object-fit:contain;margin:auto;display:block;border-radius:20px;\" />|g" "$TARGET_HTML"
+              convert logo.png -resize 256x256 -strip web_assets/appearance/boot/logo.png
+              convert logo.png -resize 256x256 -strip web_assets/appearance/boot/icon.png
+              convert logo.png -resize 256x256 -strip web_assets/stage/icon.png
             fi
+
+            # 2. 彻底删除原版绘制折纸的 path 矢量与 streaks 光带
+            sed -i '/<path fill="#d23f31"/d' "$TARGET_HTML"
+            sed -i '/<path fill="#3b3e43"/d' "$TARGET_HTML"
+            sed -i '/<g class="streaks">/,/<\/g>/d' "$TARGET_HTML"
+            
+            # 3. 将 svg 容器直接换成图片标签
+            sed -i 's|<div id="bg">.*|<div id="bg"><img src="logo.png" style="width:130px;height:130px;object-fit:contain;margin:auto;display:block;border-radius:20px;" /></div>|g' "$TARGET_HTML"
+            sed -i '/<svg/,/<\/svg>/d' "$TARGET_HTML"
           fi
 
           mkdir -p app/src/main/assets/
