@@ -25,61 +25,49 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 自动接受 Android SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：修复 Maven 源（彻底根除 aliyun 超时死锁）、安全配置应用信息
+      # 步骤 1：修复 Maven 海外直连、配置应用名与包名
       - name: Configure App Info and Fix Maven Mirrors
         run: |
           NEW_APP_ID="com.jincheng.note"
 
-          # 替换国内镜像为官方高速源
+          # 修复阿里云 Maven 跨国死锁
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 清单文件安全更名
+          # 清单更名与版本号
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 强刷缓存的高版本号
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
-          # 包名配置
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
           if [ -f flavors.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" flavors.gradle
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：安全替换原生图标与启动矢量（不删文件，彻底解决闪退与折纸）
+      # 步骤 2：安全处理原生图标，彻底拔除原生层折纸矢量（绝对不删文件，避免闪退）
       - name: Replace Native Icons Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
 
           if [ -f logo.png ]; then
-            echo "正在安全生成位图资源..."
             mkdir -p app/src/main/res/drawable
 
-            # 生成标准的启动与 Logo PNG 位图
+            # 生成位图
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
-            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/custom_logo.png
 
-            # 核心防闪退点：保留原本的所有资源引用，将原生工程内所有引用的 logo.xml 改写为指向 custom_logo.png
-            find app/src/main/res/ -name "logo.xml" -exec sh -c '
-              cat << "EOF" > "$1"
-<?xml version="1.0" encoding="utf-8"?>
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:src="@drawable/custom_logo"
-    android:gravity="center" />
-EOF
-            ' sh {} \;
+            # 根治原生层折纸：将 logo.xml 的 path 路径清空，消除原生折纸
+            find app/src/main/res/ -name "logo.xml" -exec sed -i '/<path/d' {} + || true
 
-            # 各分辨率桌面图标替换
+            # 生成桌面各规格图标
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
@@ -88,11 +76,10 @@ EOF
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png"
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
             done
-            echo "原生层资源安全覆写完成！"
           fi
 
-      # 步骤 3：下载官方完整前端包并彻底覆写开屏 HTML（保留完整 stage 产物不报 404）
-      - name: Prepare Assets and Inject Custom Splash
+      # 步骤 3：准备完整前端 assets，彻底清除网页端折纸 SVG
+      - name: Extract Official Assets and Clean Splash SVG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -107,48 +94,20 @@ EOF
           mkdir -p web_assets
           unzip -q temp_apk/assets/app.zip -d web_assets/
 
-          # 自动注入干净的 Base64 自定义 Logo 开屏
-          if [ -f logo.png ]; then
-            python3 - << 'PY_EOF'
-import base64
+          # 彻底清除 HTML 中的折纸 SVG 和光带动画
+          TARGET_HTML="web_assets/appearance/boot/index.html"
+          if [ -f "$TARGET_HTML" ]; then
+            echo "正在清洗 appearance/boot/index.html..."
+            sed -i '/<g class="streaks">/,/<\/g>/d' "$TARGET_HTML"
+            sed -i '/<g class="logo">/,/<\/g>/d' "$TARGET_HTML"
+            sed -i 's/<svg[^>]*>/<div id="bg_custom">/g' "$TARGET_HTML"
+            sed -i 's/<\/svg>/<\/div>/g' "$TARGET_HTML"
 
-with open('logo.png', 'rb') as f:
-    b64 = base64.b64encode(f.read()).decode('utf-8')
-uri = f"data:image/png;base64,{b64}"
-
-html = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,viewport-fit=cover">
-<style>
-html,body{{height:100%;margin:0;overflow:hidden;background:#1e1e1e;}}
-#bg{{display:flex;justify-content:center;align-items:center;height:100%;width:100%;}}
-#bg img{{width:140px;height:140px;object-fit:contain;border-radius:24px;box-shadow:0 6px 24px rgba(0,0,0,0.4);}}
-#progressWrap{{position:absolute;bottom:env(safe-area-inset-bottom);width:100%;}}
-#progressTrack{{height:2px;background-color:#2a2c2f;width:100%;}}
-#progress{{height:2px;background-color:#3b3e43;box-shadow:0 0 8px rgba(59,62,67,0.6);width:0;transition:width 0.3s;}}
-#details{{color:#9aa0a6;padding:8px;font-size:12px;font-family:sans-serif;text-align:center;}}
-</style>
-</head>
-<body>
-<div id="bg"><img src="{uri}" alt="Logo"></div>
-<div id="progressWrap"><div id="progressTrack"></div><div id="progress"></div><div id="details"></div></div>
-<script>
-const redirect=()=>{{window.location.replace('http://127.0.0.1:'+location.port);}};
-const p=document.getElementById('progress'),d=document.getElementById('details');
-p.style.width='25%';d.textContent='Booting kernel...';
-const es=new EventSource('http://127.0.0.1:'+location.port+'/api/system/bootProgressSSE');
-es.onmessage=(e)=>{{const data=JSON.parse(e.data);p.style.width=data.progress+'%';d.textContent=data.details;if(data.progress>=100){{es.close();setTimeout(redirect,150);}}}};
-es.onerror=()=>{{es.close();setTimeout(()=>{{const r=new EventSource('http://127.0.0.1:'+location.port+'/api/system/bootProgressSSE');r.onmessage=es.onmessage;}},300);}};
-</script>
-</body>
-</html>"""
-
-with open('web_assets/appearance/boot/index.html', 'w', encoding='utf-8') as f:
-    f.write(html)
-print("前端开屏替换完成！")
-PY_EOF
+            # 如果有 logo.png，将 Base64 直接插入中心
+            if [ -f logo.png ]; then
+              B64=$(base64 -w 0 logo.png)
+              sed -i "s|<div id=\"bg_custom\">|<div id=\"bg_custom\"><img src=\"data:image/png;base64,${B64}\" style=\"width:140px;height:140px;object-fit:contain;margin:auto;display:block;border-radius:20px;\" />|g" "$TARGET_HTML"
+            fi
           fi
 
           mkdir -p app/src/main/assets/
@@ -158,7 +117,7 @@ PY_EOF
 
           rm -rf temp_apk web_assets
 
-      # 步骤 4：配置签名
+      # 步骤 4：生成正式签名并配置
       - name: Setup Signing Configuration
         run: |
           keytool -genkeypair -v -keystore release.jks -alias siyuan -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
@@ -193,7 +152,7 @@ PY_EOF
       - name: Build Domestic Release APK
         run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      # 步骤 7：上传 APK
+      # 步骤 7：上传 APK 安装包
       - name: Upload Domestic Release APK
         uses: actions/upload-artifact@v4
         with:
