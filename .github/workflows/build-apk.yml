@@ -56,7 +56,7 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成原生位图资源与符合规范的自适应图标（修复桌面拉伸变形）
+      # 步骤 2：生成原生位图资源与符合规范的自适应图标（修复桌面图标拉伸变形）
       - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -67,7 +67,7 @@ jobs:
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
 
-            # 核心修复：居中留出四周安全区（缩放至约 65% 并填充透明画布），防止系统裁剪时拉伸贴边
+            # 居中留出四周安全区（缩放至约 65% 并填充透明画布），防止系统裁剪时拉伸贴边变形
             convert logo.png -resize 280x280 -gravity center -background none -extent 432x432 -strip -define png:format=png32 app/src/main/res/drawable/launcher_foreground_img.png
 
             # 覆盖桌面自适应图标前景
@@ -98,15 +98,30 @@ jobs:
             done
           fi
 
-      # 步骤 3：合成分卷恢复自定义 app.zip
-      - name: Assemble Custom app.zip from Parts
+      # 步骤 3：合成分卷恢复自定义 app.zip 并替换“欢迎使用思源”等文案
+      - name: Assemble Custom app.zip and Patch i18n
         run: |
+          sudo apt-get install -y zip unzip
           cd app/src/main/assets/
           echo "正在合成分卷文件..."
           ls -lh app.zip.part*
           cat app.zip.part* > app.zip
           rm -f app.zip.part*
-          echo "合成完成，当前 app.zip 属性："
+
+          # 解压 app.zip 替换多语言配置中的思源文案
+          mkdir -p /tmp/app_extracted
+          unzip -q app.zip -d /tmp/app_extracted
+          
+          find /tmp/app_extracted/ -type f -name "*zh_CN*.json" -exec sed -i 's/"欢迎使用思源"/"欢迎使用金成笔记"/g' {} +
+          find /tmp/app_extracted/ -type f -name "*zh_CN*.json" -exec sed -i 's/思源笔记/金成笔记/g' {} +
+
+          # 重新打包回 app.zip
+          cd /tmp/app_extracted
+          zip -qr "$GITHUB_WORKSPACE/app/src/main/assets/app.zip" ./*
+          rm -rf /tmp/app_extracted
+
+          cd "$GITHUB_WORKSPACE/app/src/main/assets/"
+          echo "合成与文案替换完成，当前 app.zip 属性："
           ls -lh app.zip
           unzip -t app.zip | head -n 10
 
