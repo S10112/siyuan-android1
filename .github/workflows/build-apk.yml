@@ -30,7 +30,7 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：修复 Maven 海外直连、配置应用名与包名
+      # 步骤 1：修复 Maven 海外直连、恢复官方完整清单与包名配置
       - name: Configure App Info and Fix Maven Mirrors
         run: |
           NEW_APP_ID="com.jincheng.note"
@@ -39,11 +39,15 @@ jobs:
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 清单更名与高版本号
+          # 恢复完整官方清单并更新应用名
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
+          # 恢复官方完整的 activity_boot.xml，确保所有原生控件 ID 存在
+          curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/res/layout/activity_boot.xml -o app/src/main/res/layout/activity_boot.xml
+
+          # 高版本号
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
@@ -54,8 +58,8 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成位图资源并通过独立脚本修复原生层启动与自适应图标
-      - name: Rebuild Native Icons and Splash
+      # 步骤 2：生成原生位图资源并安全适配原生层
+      - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
 
@@ -77,7 +81,7 @@ jobs:
             python3 fix_assets.py
           fi
 
-      # 步骤 3：下载完整前端产物，全局清洗 Web 端折纸
+      # 步骤 3：下载完整前端产物，清洗 Web 端折纸
       - name: Extract Official Assets and Clean Web SVG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
