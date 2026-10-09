@@ -35,11 +35,11 @@ jobs:
         run: |
           NEW_APP_ID="com.jincheng.note"
 
-          # 修复阿里云 Maven 跨国构建超时
+          # 修复阿里云 Maven 跨国构建超时死锁
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 清单更名与版本号
+          # 清单更名与版本号锁定
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
@@ -56,7 +56,7 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成原生位图资源与自适应图标（防止小机器人与原生闪退）
+      # 步骤 2：生成原生位图资源与符合规范的自适应图标（修复桌面拉伸变形）
       - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -67,10 +67,13 @@ jobs:
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
 
+            # 核心修复：居中留出四周安全区（缩放至约 65% 并填充透明画布），防止系统裁剪时拉伸贴边
+            convert logo.png -resize 280x280 -gravity center -background none -extent 432x432 -strip -define png:format=png32 app/src/main/res/drawable/launcher_foreground_img.png
+
             # 覆盖桌面自适应图标前景
             printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
               '<bitmap xmlns:android="http://schemas.android.com/apk/res/android"' \
-              '    android:src="@drawable/icon"' \
+              '    android:src="@drawable/launcher_foreground_img"' \
               '    android:gravity="center" />' > app/src/main/res/drawable/launcher_foreground.xml
             
             rm -f app/src/main/res/drawable/launcher_monochrome.xml
@@ -84,6 +87,7 @@ jobs:
 
             cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
+            # 各分辨率传统位图按标准尺寸缩放
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
