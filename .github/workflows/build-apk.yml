@@ -25,21 +25,27 @@ jobs:
         with:
           go-version: '1.22'
 
+      # 自动接受 Android SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：修复 Maven 海外源、配置包名与版本
+      # 步骤 1：修复 Maven 海外源、配置包名、应用名与快捷方式
       - name: Configure App Info and Fix Maven Mirrors
         run: |
           NEW_APP_ID="com.jincheng.note"
 
+          # 修复阿里云 Maven 跨国构建超时
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
+          # 清单更名与版本号
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
+
+          # 修复“闪念速记”点击无法打开的问题（更新快捷方式目标包名）
+          find app/src/main/res/ -name "shortcuts*.xml" -exec sed -i "s|targetPackage=\"org.b3log.siyuan\"|targetPackage=\"${NEW_APP_ID}\"|g" {} + || true
 
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
@@ -50,7 +56,7 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成原生位图资源与自适应图标
+      # 步骤 2：生成原生位图资源与自适应图标（防止小机器人与原生闪退）
       - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -61,6 +67,7 @@ jobs:
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
 
+            # 覆盖桌面自适应图标前景
             printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
               '<bitmap xmlns:android="http://schemas.android.com/apk/res/android"' \
               '    android:src="@drawable/icon"' \
