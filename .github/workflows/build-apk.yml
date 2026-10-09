@@ -25,21 +25,18 @@ jobs:
         with:
           go-version: '1.22'
 
-      # 自动接受 Android SDK 协议
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：修复 Maven 海外直连、配置应用名与包名
+      # 步骤 1：修复 Maven 海外源、配置包名与版本
       - name: Configure App Info and Fix Maven Mirrors
         run: |
           NEW_APP_ID="com.jincheng.note"
 
-          # 修复阿里云 Maven 跨国死锁
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 清单更名与版本号
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
@@ -53,7 +50,7 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成原生位图资源与桌面自适应图标（杜绝闪退与小机器人图标）
+      # 步骤 2：生成原生位图资源与自适应图标
       - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -64,23 +61,20 @@ jobs:
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
 
-            # 覆盖桌面自适应图标前景
-            cat << 'EOF' > app/src/main/res/drawable/launcher_foreground.xml
-<?xml version="1.0" encoding="utf-8"?>
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:src="@drawable/icon"
-    android:gravity="center" />
-EOF
+            printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
+              '<bitmap xmlns:android="http://schemas.android.com/apk/res/android"' \
+              '    android:src="@drawable/icon"' \
+              '    android:gravity="center" />' > app/src/main/res/drawable/launcher_foreground.xml
+            
             rm -f app/src/main/res/drawable/launcher_monochrome.xml
 
             mkdir -p app/src/main/res/mipmap-anydpi-v26
-            cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
-<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@android:color/white" />
-    <foreground android:drawable="@drawable/launcher_foreground" />
-</adaptive-icon>
-EOF
+            printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
+              '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">' \
+              '    <background android:drawable="@android:color/white" />' \
+              '    <foreground android:drawable="@drawable/launcher_foreground" />' \
+              '</adaptive-icon>' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+
             cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
@@ -93,7 +87,7 @@ EOF
             done
           fi
 
-      # 步骤 3：核心恢复——自动合并 5 个分卷还原为完整的自定义 app.zip！
+      # 步骤 3：合成分卷恢复自定义 app.zip
       - name: Assemble Custom app.zip from Parts
         run: |
           cd app/src/main/assets/
@@ -101,7 +95,7 @@ EOF
           ls -lh app.zip.part*
           cat app.zip.part* > app.zip
           rm -f app.zip.part*
-          echo "合成完成！当前完整 app.zip 属性："
+          echo "合成完成，当前 app.zip 属性："
           ls -lh app.zip
           unzip -t app.zip | head -n 10
 
