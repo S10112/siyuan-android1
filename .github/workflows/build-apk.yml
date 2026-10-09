@@ -30,7 +30,7 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：修复 Maven 海外直连、恢复官方完整清单与包名配置
+      # 步骤 1：修复 Maven 海外直连、配置应用名与包名
       - name: Configure App Info and Fix Maven Mirrors
         run: |
           NEW_APP_ID="com.jincheng.note"
@@ -39,15 +39,14 @@ jobs:
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 恢复完整官方清单并更新应用名
+          # 清单更名与高版本号
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 恢复官方完整的 activity_boot.xml，确保所有原生控件 ID 存在
+          # 恢复官方原版 activity_boot.xml，确保控件 ID 齐全
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/res/layout/activity_boot.xml -o app/src/main/res/layout/activity_boot.xml
 
-          # 高版本号
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
@@ -58,7 +57,7 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成原生位图资源并安全适配原生层
+      # 步骤 2：生成原生位图资源（提供 AAPT 所需的全部图片）并执行原生修复
       - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -67,6 +66,7 @@ jobs:
             mkdir -p app/src/main/res/drawable
 
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
+            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/custom_boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
 
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
