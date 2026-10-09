@@ -2,9 +2,9 @@ import os
 import re
 
 def fix_native():
-    print("=== 开始处理 Android 原生层资源 ===")
+    print("=== 开始安全处理 Android 原生层资源（严格保留控件 ID，杜绝闪退） ===")
     
-    # 1. 修复自适应桌面图标，彻底解决 Android 小机器人问题
+    # 1. 修复自适应桌面图标
     anydpi_dir = "app/src/main/res/mipmap-anydpi-v26"
     os.makedirs(anydpi_dir, exist_ok=True)
     adaptive_xml = """<?xml version="1.0" encoding="utf-8"?>
@@ -18,8 +18,11 @@ def fix_native():
     with open(os.path.join(anydpi_dir, "ic_launcher_round.xml"), "w", encoding="utf-8") as f:
         f.write(adaptive_xml)
 
-    # 2. 彻底重写原生启动图 splash.xml
-    splash_xml = """<?xml version="1.0" encoding="utf-8"?>
+    # 2. 将所有 splash / logo 矢量资源重定向为我们的位图 boot_logo
+    drawable_dir = "app/src/main/res/drawable"
+    os.makedirs(drawable_dir, exist_ok=True)
+    
+    bitmap_xml = """<?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@android:color/black" />
     <item>
@@ -29,48 +32,21 @@ def fix_native():
     </item>
 </layer-list>
 """
-    drawable_dir = "app/src/main/res/drawable"
-    os.makedirs(drawable_dir, exist_ok=True)
-    for name in ["splash.xml", "splash_screen.xml"]:
+    # 覆盖原版引用的所有开屏矢量定义
+    for name in ["splash.xml", "splash_screen.xml", "logo.xml"]:
         with open(os.path.join(drawable_dir, name), "w", encoding="utf-8") as f:
-            f.write(splash_xml)
+            f.write(bitmap_xml)
 
-    # 3. 彻底重写原生 activity_boot.xml
-    boot_layout = """<?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#1e1e1e">
-    <ImageView
-        android:id="@+id/iv_logo"
-        android:layout_width="140dp"
-        android:layout_height="140dp"
-        android:layout_gravity="center"
-        android:src="@drawable/boot_logo"
-        android:contentDescription="@null" />
-</FrameLayout>
-"""
-    layout_dir = "app/src/main/res/layout"
-    os.makedirs(layout_dir, exist_ok=True)
-    with open(os.path.join(layout_dir, "activity_boot.xml"), "w", encoding="utf-8") as f:
-        f.write(boot_layout)
-
-    # 4. 清除原生工程中任何可能残留的折纸矢量路径
-    res_dir = "app/src/main/res"
-    for root, dirs, files in os.walk(res_dir):
-        for file in files:
-            if file.endswith(".xml") and ("logo" in file or "splash" in file):
-                filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        c = f.read()
-                    if "<path" in c and ("M37.052" in c or "M306.909" in c):
-                        c = re.sub(r'<path[^>]*/>', '', c)
-                        c = re.sub(r'<path[^>]*>.*?</path>', '', c, flags=re.DOTALL)
-                        with open(filepath, "w", encoding="utf-8") as f:
-                            f.write(c)
-                except Exception:
-                    pass
+    # 3. 安全更新 activity_boot.xml（只替换 ImageView 的图片源，绝不删除任何 ProgressBar / TextView 等组件）
+    boot_xml_path = "app/src/main/res/layout/activity_boot.xml"
+    if os.path.exists(boot_xml_path):
+        with open(boot_xml_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # 将引用的 @drawable/logo 或旧图片强制换成 @drawable/boot_logo
+        content = re.sub(r'android:src="@drawable/[^"]+"', 'android:src="@drawable/boot_logo"', content)
+        with open(boot_xml_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print("已安全更新 activity_boot.xml 图片引用，保留全部原有控件 ID！")
 
 def fix_web():
     print("=== 开始处理 Web 前端层资产 ===")
