@@ -35,29 +35,25 @@ jobs:
         run: |
           NEW_APP_ID="com.jincheng.note"
 
-          # 修复阿里云 Maven 超时死锁
+          # 修复阿里云 Maven 跨国死锁
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 清单更名与高版本号
+          # 清单更名与版本号
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 恢复官方原版 activity_boot.xml，确保控件 ID 齐全
-          curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/res/layout/activity_boot.xml -o app/src/main/res/layout/activity_boot.xml
-
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
           sed -i "s/siyuanVersionName = .*/siyuanVersionName = \"9.9.9\"/g" build.gradle || true
           
-          # 包名配置
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
           if [ -f flavors.gradle ]; then
             sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" flavors.gradle
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成原生位图资源（提供 AAPT 所需的全部图片）并执行原生修复
+      # 步骤 2：生成原生位图资源与桌面自适应图标（杜绝闪退与小机器人图标）
       - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -66,8 +62,26 @@ jobs:
             mkdir -p app/src/main/res/drawable
 
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
-            convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/custom_boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
+
+            # 覆盖桌面自适应图标前景
+            cat << 'EOF' > app/src/main/res/drawable/launcher_foreground.xml
+<?xml version="1.0" encoding="utf-8"?>
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/icon"
+    android:gravity="center" />
+EOF
+            rm -f app/src/main/res/drawable/launcher_monochrome.xml
+
+            mkdir -p app/src/main/res/mipmap-anydpi-v26
+            cat << 'EOF' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@android:color/white" />
+    <foreground android:drawable="@drawable/launcher_foreground" />
+</adaptive-icon>
+EOF
+            cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
@@ -77,43 +91,19 @@ jobs:
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png"
               convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
             done
-
-            python3 fix_assets.py
           fi
 
-      # 步骤 3：下载完整前端产物，清洗 Web 端折纸
-      - name: Extract Official Assets and Clean Web SVG
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 步骤 3：核心恢复——自动合并 5 个分卷还原为完整的自定义 app.zip！
+      - name: Assemble Custom app.zip from Parts
         run: |
-          sudo apt-get install -y zip unzip python3
-          mkdir -p temp_apk
-          cd temp_apk
-          gh release download --repo siyuan-note/siyuan --pattern "*.apk" --clobber
-          APK_FILE=$(find . -maxdepth 1 -name "*.apk" | head -n 1)
-          unzip -q "$APK_FILE"
-          cd ..
-          
-          mkdir -p web_assets
-          unzip -q temp_apk/assets/app.zip -d web_assets/
-
-          if [ -f logo.png ]; then
-            convert logo.png -resize 256x256 -strip web_assets/appearance/boot/logo.png
-            convert logo.png -resize 256x256 -strip web_assets/appearance/boot/icon.png
-            convert logo.png -resize 256x256 -strip web_assets/stage/icon.png
-            mkdir -p web_assets/stage/build/mobile/
-            convert logo.png -resize 256x256 -strip web_assets/stage/build/mobile/icon.png
-            convert logo.png -resize 256x256 -strip web_assets/stage/build/mobile/logo.png
-          fi
-
-          python3 fix_assets.py web
-
-          mkdir -p app/src/main/assets/
-          cd web_assets
-          zip -qr "$GITHUB_WORKSPACE/app/src/main/assets/app.zip" ./*
-          cd "$GITHUB_WORKSPACE"
-
-          rm -rf temp_apk web_assets
+          cd app/src/main/assets/
+          echo "正在合成分卷文件..."
+          ls -lh app.zip.part*
+          cat app.zip.part* > app.zip
+          rm -f app.zip.part*
+          echo "合成完成！当前完整 app.zip 属性："
+          ls -lh app.zip
+          unzip -t app.zip | head -n 10
 
       # 步骤 4：生成正式签名并配置
       - name: Setup Signing Configuration
