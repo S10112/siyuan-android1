@@ -127,13 +127,13 @@ jobs:
           sed -i "s|keyAlias .*|keyAlias 'siyuan'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 5：编译底层 kernel.aar
+      # 步骤 5：编译底层 kernel.aar（锁定官方正式发布 Tag v3.8.6，规避 Alpha 实验性特性缺陷）
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
           JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8'
         run: |
-          git clone --depth=1 https://github.com/siyuan-note/siyuan.git /tmp/siyuan-core
+          git clone --depth=1 --branch v3.8.6 https://github.com/siyuan-note/siyuan.git /tmp/siyuan-core
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
           export PATH=$PATH:$(go env GOPATH)/bin
