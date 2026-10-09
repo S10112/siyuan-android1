@@ -18,7 +18,7 @@ def fix_native():
     with open(os.path.join(anydpi_dir, "ic_launcher_round.xml"), "w", encoding="utf-8") as f:
         f.write(adaptive_xml)
 
-    # 2. 生成标准启动图定义 (custom_boot_logo)
+    # 2. 生成标准启动图定义（直接绑定实际存在的 boot_logo）
     drawable_dir = "app/src/main/res/drawable"
     os.makedirs(drawable_dir, exist_ok=True)
     splash_xml = """<?xml version="1.0" encoding="utf-8"?>
@@ -27,7 +27,7 @@ def fix_native():
     <item>
         <bitmap
             android:gravity="center"
-            android:src="@drawable/custom_boot_logo" />
+            android:src="@drawable/boot_logo" />
     </item>
 </layer-list>
 """
@@ -35,7 +35,7 @@ def fix_native():
         with open(os.path.join(drawable_dir, name), "w", encoding="utf-8") as f:
             f.write(splash_xml)
 
-    # 3. 扫描 values 目录中的 styles.xml 与 themes.xml，将 windowBackground 指向新开屏图
+    # 3. 扫描 values 目录中的 styles.xml 与 themes.xml，将 windowBackground 指向 boot_logo
     values_dir = "app/src/main/res/values"
     if os.path.exists(values_dir):
         for f_name in os.listdir(values_dir):
@@ -44,8 +44,7 @@ def fix_native():
                 try:
                     with open(f_path, "r", encoding="utf-8", errors="ignore") as f:
                         c = f.read()
-                    # 替换可能直接硬编码的启动矢量引用
-                    c_new = re.sub(r'@drawable/(splash|logo|boot_logo)', '@drawable/custom_boot_logo', c)
+                    c_new = re.sub(r'@drawable/(splash|logo|custom_boot_logo)', '@drawable/boot_logo', c)
                     if c_new != c:
                         with open(f_path, "w", encoding="utf-8") as f:
                             f.write(c_new)
@@ -53,12 +52,12 @@ def fix_native():
                 except Exception:
                     pass
 
-    # 4. 安全更新 activity_boot.xml，保留所有原有控件与 ID
+    # 4. 安全更新 activity_boot.xml，保留所有控件与 ID，并指向 boot_logo
     boot_xml_path = "app/src/main/res/layout/activity_boot.xml"
     if os.path.exists(boot_xml_path):
         with open(boot_xml_path, "r", encoding="utf-8") as f:
             content = f.read()
-        content = re.sub(r'android:src="@drawable/[^"]+"', 'android:src="@drawable/custom_boot_logo"', content)
+        content = re.sub(r'android:src="@drawable/[^"]+"', 'android:src="@drawable/boot_logo"', content)
         with open(boot_xml_path, "w", encoding="utf-8") as f:
             f.write(content)
         print("activity_boot.xml 引用更新完成")
