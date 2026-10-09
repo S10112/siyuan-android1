@@ -44,7 +44,7 @@ jobs:
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 修复“闪念速记”点击无法打开的问题（更新快捷方式目标包名）
+          # 修复“闪念速记”快捷方式包名指向
           find app/src/main/res/ -name "shortcuts*.xml" -exec sed -i "s|targetPackage=\"org.b3log.siyuan\"|targetPackage=\"${NEW_APP_ID}\"|g" {} + || true
 
           sed -i "s/siyuanVersionCode = .*/siyuanVersionCode = 99999/g" build.gradle || true
@@ -56,7 +56,7 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成原生位图资源与符合规范的自适应图标（修复桌面拉伸变形）
+      # 步骤 2：生成原生位图资源与开屏启动图（根治 activity_boot 原生折纸与桌面变形）
       - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -64,13 +64,13 @@ jobs:
           if [ -f logo.png ]; then
             mkdir -p app/src/main/res/drawable
 
+            # 1. 强制生成并覆盖所有可能被原生层读取的位图
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
 
-            # 居中留出四周安全区（缩放至约 65% 并填充透明画布），防止系统裁剪时拉伸贴边
+            # 2. 居中留出四周安全区，生成自适应桌面图标
             convert logo.png -resize 280x280 -gravity center -background none -extent 432x432 -strip -define png:format=png32 app/src/main/res/drawable/launcher_foreground_img.png
 
-            # 覆盖桌面自适应图标前景
             printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
               '<bitmap xmlns:android="http://schemas.android.com/apk/res/android"' \
               '    android:src="@drawable/launcher_foreground_img"' \
@@ -87,7 +87,14 @@ jobs:
 
             cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
-            # 各分辨率传统位图按标准尺寸缩放
+            # 3. 彻底修改 activity_boot.xml 布局：替换图片源与文字
+            if [ -f app/src/main/res/layout/activity_boot.xml ]; then
+              sed -i 's|android:src="@drawable/icon"|android:src="@drawable/boot_logo"|g' app/src/main/res/layout/activity_boot.xml
+              sed -i 's|android:text="思源笔记"|android:text="金成笔记"|g' app/src/main/res/layout/activity_boot.xml
+              echo "activity_boot.xml 启动页已更新为专属 Logo 与金成笔记！"
+            fi
+
+            # 4. 生成各分辨率传统桌面图标
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
@@ -145,7 +152,7 @@ jobs:
       - name: Build Domestic Release APK
         run: ./gradlew assembleCnRelease -PcompileSdkVersion=34 -PtargetSdkVersion=34 --no-daemon --stacktrace
 
-      # 步骤 7：将安装包文件名从 siyuan 重命名为 金成笔记
+      # 步骤 7：重命名 APK 为金成笔记
       - name: Rename APK to 金成笔记
         run: |
           cd app/build/outputs/apk/cn/release/
