@@ -2,7 +2,7 @@ import os
 import re
 
 def fix_native():
-    print("=== 开始安全处理 Android 原生层资源（严格保留控件 ID，杜绝闪退） ===")
+    print("=== 开始修正原生主题与开屏背景 ===")
     
     # 1. 修复自适应桌面图标
     anydpi_dir = "app/src/main/res/mipmap-anydpi-v26"
@@ -18,38 +18,53 @@ def fix_native():
     with open(os.path.join(anydpi_dir, "ic_launcher_round.xml"), "w", encoding="utf-8") as f:
         f.write(adaptive_xml)
 
-    # 2. 将所有 splash / logo 矢量资源重定向为我们的位图 boot_logo
+    # 2. 生成标准启动图定义 (custom_boot_logo)
     drawable_dir = "app/src/main/res/drawable"
     os.makedirs(drawable_dir, exist_ok=True)
-    
-    bitmap_xml = """<?xml version="1.0" encoding="utf-8"?>
+    splash_xml = """<?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@android:color/black" />
     <item>
         <bitmap
             android:gravity="center"
-            android:src="@drawable/boot_logo" />
+            android:src="@drawable/custom_boot_logo" />
     </item>
 </layer-list>
 """
-    # 覆盖原版引用的所有开屏矢量定义
-    for name in ["splash.xml", "splash_screen.xml", "logo.xml"]:
+    for name in ["splash.xml", "splash_screen.xml", "logo.xml", "boot_splash.xml"]:
         with open(os.path.join(drawable_dir, name), "w", encoding="utf-8") as f:
-            f.write(bitmap_xml)
+            f.write(splash_xml)
 
-    # 3. 安全更新 activity_boot.xml（只替换 ImageView 的图片源，绝不删除任何 ProgressBar / TextView 等组件）
+    # 3. 扫描 values 目录中的 styles.xml 与 themes.xml，将 windowBackground 指向新开屏图
+    values_dir = "app/src/main/res/values"
+    if os.path.exists(values_dir):
+        for f_name in os.listdir(values_dir):
+            if f_name.endswith(".xml"):
+                f_path = os.path.join(values_dir, f_name)
+                try:
+                    with open(f_path, "r", encoding="utf-8", errors="ignore") as f:
+                        c = f.read()
+                    # 替换可能直接硬编码的启动矢量引用
+                    c_new = re.sub(r'@drawable/(splash|logo|boot_logo)', '@drawable/custom_boot_logo', c)
+                    if c_new != c:
+                        with open(f_path, "w", encoding="utf-8") as f:
+                            f.write(c_new)
+                        print(f"已更新原生主题文件: {f_name}")
+                except Exception:
+                    pass
+
+    # 4. 安全更新 activity_boot.xml，保留所有原有控件与 ID
     boot_xml_path = "app/src/main/res/layout/activity_boot.xml"
     if os.path.exists(boot_xml_path):
         with open(boot_xml_path, "r", encoding="utf-8") as f:
             content = f.read()
-        # 将引用的 @drawable/logo 或旧图片强制换成 @drawable/boot_logo
-        content = re.sub(r'android:src="@drawable/[^"]+"', 'android:src="@drawable/boot_logo"', content)
+        content = re.sub(r'android:src="@drawable/[^"]+"', 'android:src="@drawable/custom_boot_logo"', content)
         with open(boot_xml_path, "w", encoding="utf-8") as f:
             f.write(content)
-        print("已安全更新 activity_boot.xml 图片引用，保留全部原有控件 ID！")
+        print("activity_boot.xml 引用更新完成")
 
 def fix_web():
-    print("=== 开始处理 Web 前端层资产 ===")
+    print("=== 开始处理 Web 框架层 ===")
     web_dir = "web_assets"
     if not os.path.exists(web_dir):
         return
