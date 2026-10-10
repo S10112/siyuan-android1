@@ -56,21 +56,29 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成原生位图资源与符合规范的自适应图标（修复桌面拉伸变形与启动屏）
+      # 步骤 2：生成原生位图资源与符合规范的自适应图标（彻底解决白边与变形）
       - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
 
           if [ -f logo.png ]; then
             mkdir -p app/src/main/res/drawable
+            mkdir -p app/src/main/res/values
 
+            # 1. 生成纯黑背景颜色值，供自适应图标背景调用，彻底杜绝上下白边
+            printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
+              '<resources>' \
+              '    <color name="ic_launcher_background">#1e1e1e</color>' \
+              '</resources>' > app/src/main/res/values/ic_launcher_background.xml
+
+            # 2. 保持等比例缩放（限制最大宽度 300、最大高度 300，居中填充到 432x432 透明画布），彻底防止拉伸变形
+            convert logo.png -resize 300x300 -gravity center -background none -extent 432x432 -strip -define png:format=png32 app/src/main/res/drawable/launcher_foreground_img.png
+
+            # 3. 准备启动图与内置常规图标
             convert logo.png -resize 256x256 -strip -define png:format=png32 app/src/main/res/drawable/boot_logo.png
             convert logo.png -resize 192x192 -strip -define png:format=png32 app/src/main/res/drawable/icon.png
 
-            # 居中留出四周安全区（缩放至约 65% 并填充透明画布），防止系统裁剪时拉伸贴边变形
-            convert logo.png -resize 280x280 -gravity center -background none -extent 432x432 -strip -define png:format=png32 app/src/main/res/drawable/launcher_foreground_img.png
-
-            # 覆盖桌面自适应图标前景
+            # 4. 覆盖桌面自适应图标前景
             printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
               '<bitmap xmlns:android="http://schemas.android.com/apk/res/android"' \
               '    android:src="@drawable/launcher_foreground_img"' \
@@ -78,44 +86,62 @@ jobs:
             
             rm -f app/src/main/res/drawable/launcher_monochrome.xml
 
+            # 5. 配置自适应图标：背景使用 #1e1e1e 黑底，前景使用等比例居中的金成笔记徽标
             mkdir -p app/src/main/res/mipmap-anydpi-v26
             printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' \
               '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">' \
-              '    <background android:drawable="@android:color/white" />' \
+              '    <background android:drawable="@color/ic_launcher_background" />' \
               '    <foreground android:drawable="@drawable/launcher_foreground" />' \
               '</adaptive-icon>' > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
 
             cp app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
 
-            # 修改 activity_boot.xml 布局图片源与文字，杜绝原版残留
+            # 6. 修改 activity_boot.xml 布局图片源与文字，杜绝原版残留
             if [ -f app/src/main/res/layout/activity_boot.xml ]; then
               sed -i 's|android:src="@drawable/icon"|android:src="@drawable/boot_logo"|g' app/src/main/res/layout/activity_boot.xml
               sed -i 's|android:text="思源笔记"|android:text="金成笔记"|g' app/src/main/res/layout/activity_boot.xml
-              echo "activity_boot.xml 启动页已更新为专属 Logo 与金成笔记！"
+              echo "activity_boot.xml 启动页已更新！"
             fi
 
-            # 各分辨率传统位图按标准尺寸缩放
+            # 7. 各分辨率传统图标：统一黑底并等比例居中
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
               DIR="app/src/main/res/mipmap-${res%%:*}"
               SIZE="${res##*:}"
               mkdir -p "$DIR"
-              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher.png"
-              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher_round.png"
-              convert logo.png -resize ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/shorthand_icon.png"
+              # 先缩放到约 70% 尺寸，再用 #1e1e1e 底色铺满，保证传统圆角图标不露白
+              INNER_SIZE=$(awk "BEGIN {print int($SIZE * 0.72)}")
+              convert logo.png -resize ${INNER_SIZE}x${INNER_SIZE} -gravity center -background "#1e1e1e" -extent ${SIZE}x${SIZE} -strip -define png:format=png32 "$DIR/ic_launcher.png"
+              cp "$DIR/ic_launcher.png" "$DIR/ic_launcher_round.png"
+              cp "$DIR/ic_launcher.png" "$DIR/shorthand_icon.png"
             done
           fi
 
-      # 步骤 3：合成分卷恢复自定义 app.zip
-      - name: Assemble Custom app.zip from Parts
+      # 步骤 3：合成分卷并自动替换 PWA 清单中的“SiYuan”为“金成笔记”
+      - name: Assemble Custom app.zip and Patch Manifest
         run: |
+          sudo apt-get install -y zip unzip
           cd app/src/main/assets/
           echo "正在合成分卷文件..."
           ls -lh app.zip.part*
           cat app.zip.part* > app.zip
           rm -f app.zip.part*
-          echo "合成完成，当前 app.zip 属性："
-          ls -lh app.zip
-          unzip -t app.zip | head -n 10
+
+          # 解压并自动化兜底修正 PWA 安装清单
+          mkdir -p /tmp/app_extracted
+          unzip -q app.zip -d /tmp/app_extracted
+
+          find /tmp/app_extracted/ -type f \( -name "*manifest*" -o -name "*.webmanifest" \) -exec sed -i 's/"name": *"SiYuan"/"name": "金成笔记"/g' {} +
+          find /tmp/app_extracted/ -type f \( -name "*manifest*" -o -name "*.webmanifest" \) -exec sed -i 's/"short_name": *"SiYuan"/"short_name": "金成笔记"/g' {} +
+          find /tmp/app_extracted/ -type f \( -name "*manifest*" -o -name "*.webmanifest" \) -exec sed -i 's/"name": *"思源笔记"/"name": "金成笔记"/g' {} +
+          find /tmp/app_extracted/ -type f \( -name "*manifest*" -o -name "*.webmanifest" \) -exec sed -i 's/"short_name": *"思源笔记"/"short_name": "金成笔记"/g' {} +
+
+          # 重新打回 app.zip
+          cd /tmp/app_extracted
+          zip -qr "$GITHUB_WORKSPACE/app/src/main/assets/app.zip" ./*
+          rm -rf /tmp/app_extracted
+
+          cd "$GITHUB_WORKSPACE/app/src/main/assets/"
+          echo "app.zip 合并完成！"
 
       # 步骤 4：生成正式签名并配置
       - name: Setup Signing Configuration
@@ -134,8 +160,8 @@ jobs:
           JAVA_TOOL_OPTIONS: '-Dfile.encoding=UTF-8'
         run: |
           git clone --depth=1 --branch v3.8.6 https://github.com/siyuan-note/siyuan.git /tmp/siyuan-core
-          go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
+          go install golang.org/x/mobile/cmd/gomobile@latest
           export PATH=$PATH:$(go env GOPATH)/bin
           export ANDROID_NDK_HOME=$(ls -d $ANDROID_HOME/ndk/* | sort -V | tail -n 1)
           gomobile init
