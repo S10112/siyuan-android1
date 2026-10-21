@@ -30,21 +30,23 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：配置包名、应用名与快捷方式（保留官方原生版本号）
+      # 步骤 1：修复 Maven 源（补充 gradlePluginPortal 防止 classpath 缺失）、配置包名与应用名
       - name: Configure App Info and Fix Maven Mirrors
         run: |
           NEW_APP_ID="com.jincheng.note"
 
-          # 修复阿里云 Maven 跨国构建超时死锁
+          # 1. 彻底修复根目录 build.gradle 仓库源，加入 gradlePluginPortal() 与官方 google() / mavenCentral()
+          sed -i '/repositories {/a \        gradlePluginPortal()\n        google()\n        mavenCentral()' build.gradle
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
+          find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/gradle-plugin|https://plugins.gradle.org/m2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 清单更名（保持官方 build.gradle 原生版本号，不做篡改）
+          # 2. 清单更名与原生版本号维持
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 修复“闪念速记”快捷方式包名指向
+          # 3. 修复“闪念速记”快捷方式包名指向
           find app/src/main/res/ -name "shortcuts*.xml" -exec sed -i "s|targetPackage=\"org.b3log.siyuan\"|targetPackage=\"${NEW_APP_ID}\"|g" {} + || true
 
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
@@ -88,7 +90,7 @@ jobs:
 
             if [ -f app/src/main/res/layout/activity_boot.xml ]; then
               sed -i 's|android:src="@drawable/icon"|android:src="@drawable/boot_logo"|g' app/src/main/res/layout/activity_boot.xml
-              sed -i 's|android:text="思源笔记"|android:text="金成笔记"|g' app/src/main/res/layout/activity_boot.xml
+              sed -i 's|android:text="思源笔记"|android:text="金成笔记"/g' app/src/main/res/layout/activity_boot.xml
             fi
 
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
@@ -102,7 +104,7 @@ jobs:
             done
           fi
 
-      # 步骤 3：合成分卷并自动替换 PWA 清单中的“SiYuan”为“金成笔记”
+      # 步骤 3：合成分卷并自动替换 PWA 清单
       - name: Assemble Custom app.zip and Patch Manifest
         run: |
           sudo apt-get install -y zip unzip
@@ -128,10 +130,9 @@ jobs:
           echo "Web 清单注入完成，当前 app.zip 大小："
           ls -lh app.zip
 
-      # 步骤 4：生成 10 年有效期签名证书（3650 天），且全局固定复用
+      # 步骤 4：生成 10 年固定签名证书
       - name: Setup 10-Year Fixed Signing Configuration
         run: |
-          # 如果仓库中还没有固定证书，则生成一份 10 年（3650天）有效期的密钥
           if [ ! -f release.jks ]; then
             echo "首次构建，正在生成 10 年有效期的固定签名密钥 release.jks ..."
             keytool -genkeypair -v -keystore release.jks -alias jincheng -keyalg RSA -keysize 2048 -validity 3650 -storepass 123456 -keypass 123456 -dname "CN=Jincheng, OU=Dev, O=JinchengNote, L=BJ, ST=BJ, C=CN"
@@ -145,7 +146,7 @@ jobs:
           sed -i "s|keyAlias .*|keyAlias 'jincheng'|g" signings.gradle
           sed -i "s|keyPassword .*|keyPassword '123456'|g" signings.gradle
 
-      # 步骤 5：编译底层核心库 kernel.aar（直接跟随官方最新源码）
+      # 步骤 5：编译底层核心库 kernel.aar
       - name: Build SiYuan Kernel AAR
         env:
           CGO_ENABLED: '1'
