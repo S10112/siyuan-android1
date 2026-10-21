@@ -30,23 +30,23 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      # 步骤 1：修复 Maven 源（补充 gradlePluginPortal 防止 classpath 缺失）、配置包名与应用名
+      # 步骤 1：配置包名、应用名、快捷方式并补齐官方海外源
       - name: Configure App Info and Fix Maven Mirrors
         run: |
           NEW_APP_ID="com.jincheng.note"
 
-          # 1. 彻底修复根目录 build.gradle 仓库源，加入 gradlePluginPortal() 与官方 google() / mavenCentral()
+          # 修复 Maven 依赖源，引入官方 Google / MavenCentral / Gradle 插件源防止依赖缺失
           sed -i '/repositories {/a \        gradlePluginPortal()\n        google()\n        mavenCentral()' build.gradle
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/repository/gradle-plugin|https://plugins.gradle.org/m2|g' {} +
           find . -type f -name "*.gradle" -exec sed -i 's|https*://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-          # 2. 清单更名与原生版本号维持
+          # 清单更名（保持官方 build.gradle 原生版本号，不做篡改）
           curl -sSL https://raw.githubusercontent.com/siyuan-note/siyuan-android/main/app/src/main/AndroidManifest.xml -o app/src/main/AndroidManifest.xml
           sed -i 's/android:label="@string\/app_name"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
           sed -i 's/android:label="思源笔记"/android:label="金成笔记"/g' app/src/main/AndroidManifest.xml
 
-          # 3. 修复“闪念速记”快捷方式包名指向
+          # 修复“闪念速记”快捷方式包名指向
           find app/src/main/res/ -name "shortcuts*.xml" -exec sed -i "s|targetPackage=\"org.b3log.siyuan\"|targetPackage=\"${NEW_APP_ID}\"|g" {} + || true
 
           sed -i "s/applicationId \".*\"/applicationId \"${NEW_APP_ID}\"/g" app/build.gradle
@@ -55,7 +55,7 @@ jobs:
             sed -i "s/applicationPackageName = \".*\"/applicationPackageName = \"${NEW_APP_ID}\"/g" flavors.gradle
           fi
 
-      # 步骤 2：生成原生位图资源与自适应图标
+      # 步骤 2：生成原生位图资源与自适应图标（已修复 sed 分隔符语法错误）
       - name: Rebuild Native Icons and Splash Safely
         run: |
           sudo apt-get update && sudo apt-get install -y imagemagick
@@ -90,7 +90,8 @@ jobs:
 
             if [ -f app/src/main/res/layout/activity_boot.xml ]; then
               sed -i 's|android:src="@drawable/icon"|android:src="@drawable/boot_logo"|g' app/src/main/res/layout/activity_boot.xml
-              sed -i 's|android:text="思源笔记"|android:text="金成笔记"/g' app/src/main/res/layout/activity_boot.xml
+              # 关键修复：末尾分隔符由 /g 纠正为 |g
+              sed -i 's|android:text="思源笔记"|android:text="金成笔记"|g' app/src/main/res/layout/activity_boot.xml
             fi
 
             for res in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
@@ -104,7 +105,7 @@ jobs:
             done
           fi
 
-      # 步骤 3：合成分卷并自动替换 PWA 清单
+      # 步骤 3：合成分卷并自动替换 PWA 清单中的“SiYuan”为“金成笔记”
       - name: Assemble Custom app.zip and Patch Manifest
         run: |
           sudo apt-get install -y zip unzip
@@ -130,7 +131,7 @@ jobs:
           echo "Web 清单注入完成，当前 app.zip 大小："
           ls -lh app.zip
 
-      # 步骤 4：生成 10 年固定签名证书
+      # 步骤 4：生成 10 年有效期签名证书（3650 天），且全局固定复用
       - name: Setup 10-Year Fixed Signing Configuration
         run: |
           if [ ! -f release.jks ]; then
